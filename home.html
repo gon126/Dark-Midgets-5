@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Dark Midgets 5 - Home</title>
+<style>
+    body { margin: 0; background: radial-gradient(circle at top, #121215, #050404 45%, #000 100%); color: #e8e3d2; font-family: monospace; display: flex; justify-content: center; align-items: flex-start; min-height: 100vh; overflow-y: auto; position: relative; padding: 20px 0; }
+    body::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 20% 20%, rgba(255,255,255,0.08), transparent 18%), radial-gradient(circle at 80% 30%, rgba(160,255,255,0.04), transparent 18%); pointer-events: none; }
+    .container { position: relative; background: rgba(8,8,12,0.85); padding: 40px 60px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 0 50px rgba(0, 255, 255, 0.08); text-align: center; backdrop-filter: blur(8px); animation: fadeIn 1s ease-out; display: flex; flex-direction: column; align-items: center; }
+    h1 { margin-bottom: 20px; font-size: 44px; color: #c5b8a5; text-shadow: 0 0 18px rgba(255,255,255,0.12); letter-spacing: 1px; }
+    @keyframes glow { 0% { text-shadow: 0 0 8px #0ff; } 100% { text-shadow: 0 0 20px #0ff; } }
+    input, select { width: 250px; font-size: 18px; padding: 10px; margin: 12px 0; border-radius: 8px; border: 1px solid rgba(170,255,255,0.25); outline: none; background: rgba(15, 18, 23, 0.95); color: #c5d6e0; transition: 0.25s ease; }
+    input:focus, select:focus { box-shadow: 0 0 14px rgba(64, 190, 220, 0.35); background: rgba(20, 30, 40, 0.95); }
+    button { width: 250px; padding: 12px; font-size: 20px; border: none; border-radius: 6px; cursor: pointer; background: rgba(12, 120, 150, 0.95); color: #f5f0e6; font-weight: bold; margin-top: 15px; transition: 0.3s; box-shadow: 0 0 20px rgba(0, 128, 160, 0.25); }
+    button:hover { background: rgba(20, 150, 190, 1); box-shadow: 0 0 16px rgba(0, 204, 255, 0.35); transform: scale(1.04); }
+    .floating { position: absolute; font-size: 18px; pointer-events: none; opacity: 0.2; animation: float 5s infinite linear; color: #0ff; }
+    @keyframes float { 0% { transform: translateY(0); } 50% { transform: translateY(-30px); } 100% { transform: translateY(0); } }
+    @keyframes fadeIn { 0% { opacity: 0; transform: translateY(20px); } 100% { opacity: 1; transform: translateY(0); } }
+    #classDescription { margin-top: 20px; padding: 15px; border: 1px solid #0ff; border-radius: 6px; width: 300px; text-align: left; background: #0a0a0a; font-size: 16px; box-shadow: 0 0 8px rgba(0, 255, 255, 0.5); }
+    #classDescription h3 { color: #00ffaa; margin-top: 0; border-bottom: 1px dashed #0ff; padding-bottom: 5px; text-align: center; }
+    .stat-line { margin-bottom: 5px; }
+    .good-stat { color: #00ff00; }
+    .bad-stat { color: #ff0000; }
+    html, body { height: 100%; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Dark Midgets 5</h1>
+    <input id="nameInput" type="text" placeholder="Enter your name" autocomplete="off" />
+    <select id="classSelect" onchange="updateClassDescription()">
+        <option value="Ranger" data-desc="The standard, balanced starting profile. Good for beginners.">Ranger</option>
+        <option value="Gunner" data-desc="Fast firing, lower damage, excellent for crowd control.">Gunner</option>
+        <option value="Brawler" data-desc="High damage, high HP, but very slow movement and firing.">Brawler</option>
+        <option value="Acolyte" data-desc="Balanced stats with a minor starting health regeneration bonus.">Acolyte</option>
+        <option value="Sniper" data-desc="Extremely high damage and bullet speed, offset by a very long cooldown.">Sniper</option>
+        <option value="Scout" data-desc="Highest movement speed for dodging, decent fire rate, low damage.">Scout</option>
+        <option value="Engineer" data-desc="Lowest damage but the fastest fire rate, excellent for early upgrades.">Engineer</option>
+        <option value="Templar" data-desc="Highest starting HP pool, moderate damage, very slow firing.">Templar</option>
+        <option value="Berserker" data-desc="Massive damage, agonizingly slow cooldown, low max HP.">Berserker (under construction)</option>
+        <option value="Warlock" data-desc="Focus on life recovery with good damage and substantial health regen.">Warlock</option>
+        <option value="Summoner" data-desc="High HP, fast fire, low damage. Relies on supporting abilities (pets/debuffs) later.">Summoner</option>
+        <option value="Alchemist" data-desc="Drops corrosive flasks to create lingering damaging pools. Ideal for crowd control.">Alchemist</option>
+        <option value="Paladin" data-desc="Highest base HP regen, very high max HP, but slowest movement. A defensive tank.">Paladin</option>
+        <option value="Revenant" data-desc="Very high damage and speed, but extremely low HP and no regen. High risk, high reward.">Revenant</option>
+    </select>
+    <select id="difficultySelect">
+        <option value="easy">Easy</option>
+        <option value="medium" selected>Medium</option>
+        <option value="hard">Hard</option>
+    </select>
+    <label><input type="checkbox" id="hardcoreCheckbox"> Hardcore Mode</label>
+    <button onclick="startGame()">Start Game</button>
+    <div id="prestigePanel" style="margin-top: 24px; width: 100%; max-width: 360px; text-align: left; border: 1px solid #0ff; padding: 16px; border-radius: 10px; background: rgba(0,0,0,0.4);">
+        <h3 style="margin-top:0; color:#0ff;">Metaprogression</h3>
+        <div style="margin-bottom:6px;">Best Round: <strong id="bestRound">0</strong></div>
+        <div style="margin-bottom:6px;">Soul Currency: <strong id="soulCurrency">0</strong></div>
+        <div style="margin-bottom:12px;">Total XP Earned: <strong id="totalXp">0</strong></div>
+        <button id="buyHpBuff" onclick="buyPrestige('hp')" style="width:100%; margin-bottom:8px;">Spend 20 Soul for +5% Max HP</button>
+        <button id="buySpeedBuff" onclick="buyPrestige('speed')" style="width:100%;">Spend 20 Soul for +5% Speed</button>
+        <div id="perkStatus" style="margin-top:12px; font-size:14px; color:#cfc;"></div>
+    </div>
+    <div id="classDescription"></div>
+    <audio id="nutSound" src="nut_ZKo5FA9.mp3" preload="auto"></audio>
+    <button style="background: rgb(0, 9, 128); color: white;" onclick="document.getElementById('nutSound').play()">Nut Button</button>
+</div>
+
+<script>
+const faces = ["^_^", ":)", "x_x", ";P", "O_O", ">_<"];
+for (let i = 0; i < 20; i++) {
+    let f = document.createElement("div");
+    f.className = "floating";
+    f.innerText = faces[Math.floor(Math.random() * faces.length)];
+    f.style.left = Math.random() * 100 + "vw";
+    f.style.top = Math.random() * 100 + "vh";
+    f.style.animationDuration = (4 + Math.random() * 4) + "s";
+    f.style.animationDelay = (Math.random() * -4) + "s";
+    document.body.appendChild(f);
+}
+
+function getClassStats(className) {
+    let stats = { movementSpeed: 4, damage: 20, regen: 0, bulletSpeed: 100, shootCooldown: 15, maxHp: 100 };
+    switch(className) {
+        case "Gunner": stats.damage = 15; stats.shootCooldown = 5; stats.bulletSpeed = 120; break;
+        case "Brawler": stats.damage = 35; stats.movementSpeed = 3; stats.maxHp = 120; stats.shootCooldown = 20; break;
+        case "Acolyte": stats.damage = 18; stats.regen = 0.1 / 60; stats.maxHp = 110; break;
+        case "Sniper": stats.damage = 50; stats.shootCooldown = 40; stats.bulletSpeed = 180; break;
+        case "Scout": stats.movementSpeed = 6; stats.damage = 15; stats.shootCooldown = 12; break;
+        case "Engineer": stats.damage = 10; stats.shootCooldown = 4; stats.bulletSpeed = 90; break;
+        case "Templar": stats.maxHp = 150; stats.movementSpeed = 3.5; stats.damage = 25; stats.shootCooldown = 25; break;
+        case "Ranger": break;
+        case "Berserker": stats.damage = 60; stats.shootCooldown = 60; stats.maxHp = 90; break;
+        case "Warlock": stats.damage = 22; stats.regen = 0.2 / 60; stats.shootCooldown = 18; break;
+        case "Summoner": stats.maxHp = 120; stats.movementSpeed = 3.5; stats.damage = 15; stats.shootCooldown = 10; stats.regen = 0.1 / 60; break;
+        case "Alchemist": stats.maxHp = 110; stats.movementSpeed = 3.2; stats.damage = 20; stats.shootCooldown = 22; stats.regen = 0.08 / 60; break;
+        case "Paladin": stats.maxHp = 140; stats.movementSpeed = 3.0; stats.damage = 25; stats.shootCooldown = 15; stats.regen = 0.3 / 60; break;
+        case "Revenant": stats.maxHp = 80; stats.movementSpeed = 5.5; stats.damage = 50; stats.shootCooldown = 8; stats.regen = 0; break;
+    }
+    return stats;
+}
+
+function updateClassDescription() {
+    const select = document.getElementById("classSelect");
+    const className = select.value;
+    const description = select.options[select.selectedIndex].getAttribute('data-desc');
+    select.title = description;
+    const stats = getClassStats(className);
+    const container = document.getElementById("classDescription");
+    const regenPerSecond = (stats.regen * 60).toFixed(2);
+    const speedColor = stats.movementSpeed >= 4.5 ? 'good-stat' : (stats.movementSpeed <= 3.5 ? 'bad-stat' : '');
+    const damageColor = stats.damage >= 30 ? 'good-stat' : (stats.damage <= 15 ? 'bad-stat' : '');
+    const cooldownColor = stats.shootCooldown <= 10 ? 'good-stat' : (stats.shootCooldown >= 20 ? 'bad-stat' : '');
+    const hpColor = stats.maxHp >= 110 ? 'good-stat' : (stats.maxHp <= 90 ? 'bad-stat' : '');
+    const regenColor = regenPerSecond > 0.1 ? 'good-stat' : (regenPerSecond > 0 ? '' : 'bad-stat');
+    container.innerHTML = `<h3>${className} Class Stats</h3><p>${description}</p><div class="stat-line">Max HP: <span class="${hpColor}">${stats.maxHp}</span></div><div class="stat-line">Movement Speed: <span class="${speedColor}">${stats.movementSpeed}</span></div><div class="stat-line">Damage: <span class="${damageColor}">${stats.damage}</span></div><div class="stat-line">Fire Cooldown: <span class="${cooldownColor}">${stats.shootCooldown} Frames</span></div><div class="stat-line">Bullet Speed: <span>${stats.bulletSpeed}</span></div><div class="stat-line">HP Regen: <span class="${regenColor}">${regenPerSecond} / sec</span></div>`;
+}
+
+function loadHomeProgress() {
+    const storedSoul = parseInt(localStorage.getItem('soulCurrency') || '0', 10);
+    const storedRound = parseInt(localStorage.getItem('bestRound') || '0', 10);
+    const storedTotalXp = parseInt(localStorage.getItem('totalXpEarned') || '0', 10);
+    const hpBuffCount = parseInt(localStorage.getItem('hpBuffCount') || '0', 10);
+    const speedBuffCount = parseInt(localStorage.getItem('speedBuffCount') || '0', 10);
+    document.getElementById('soulCurrency').innerText = Math.max(0, storedSoul);
+    document.getElementById('bestRound').innerText = Math.max(0, storedRound);
+    document.getElementById('totalXp').innerText = Math.max(0, storedTotalXp);
+    document.getElementById('perkStatus').innerText = `HP Buffs: ${hpBuffCount} (+${hpBuffCount * 5}% Max HP) | Speed Buffs: ${speedBuffCount} (+${speedBuffCount * 5}% Move Speed)`;
+    document.getElementById('buyHpBuff').disabled = storedSoul < 20;
+    document.getElementById('buySpeedBuff').disabled = storedSoul < 20;
+}
+
+function saveHomeProgress() {
+    const storedSoul = parseInt(localStorage.getItem('soulCurrency') || '0', 10);
+    localStorage.setItem('soulCurrency', storedSoul);
+}
+
+function buyPrestige(type) {
+    let soulCurrency = parseInt(localStorage.getItem('soulCurrency') || '0', 10);
+    if (soulCurrency < 20) { alert('You need 20 Soul to buy a permanent buff.'); return; }
+    soulCurrency -= 20;
+    localStorage.setItem('soulCurrency', soulCurrency);
+    if (type === 'hp') { const count = parseInt(localStorage.getItem('hpBuffCount') || '0', 10) + 1; localStorage.setItem('hpBuffCount', count); }
+    else { const count = parseInt(localStorage.getItem('speedBuffCount') || '0', 10) + 1; localStorage.setItem('speedBuffCount', count); }
+    loadHomeProgress();
+}
+
+function startGame() {
+    const name = document.getElementById("nameInput").value.trim();
+    const difficulty = document.getElementById("difficultySelect").value;
+    const playerClass = document.getElementById("classSelect").value;
+    const hardcore = document.getElementById("hardcoreCheckbox").checked;
+    if(!name) { alert("Please enter your name!"); return; }
+    let url = "game.html?difficulty=" + difficulty + "&class=" + playerClass;
+    const hardcoreNames = ["eliad ben ilay", "nehorai"];
+    if(["ofir", "eliad ben ilay", "nehorai", "maya", "efrat"].includes(name.toLowerCase())) { url += "&birthday=true"; }
+    if(hardcoreNames.includes(name.toLowerCase()) || hardcore) { url += "&hardcore=true"; }
+    else { url += "&name=" + encodeURIComponent(name); }
+    window.location.href = url;
+}
+
+document.addEventListener('DOMContentLoaded', () => { updateClassDescription(); loadHomeProgress(); });
+</script>
+</body>
+</html>
+    

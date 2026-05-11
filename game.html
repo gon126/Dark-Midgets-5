@@ -1,0 +1,2126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Souls-Like Box RPG</title>
+<style>
+    body { margin:0; background:#000; overflow:hidden; }
+    #gameWindow { position:absolute; left:50%; top:50%; width:980px; height:600px; transform:translate(-50%,-50%); border:4px solid #444; background:#111; }
+    #ui { position:absolute; top:10px; left:10px; color:#fff; font-family:monospace; font-size:18px; z-index:5; text-shadow:2px 2px 2px black; }
+    #hint { position:absolute; bottom:20px; left:50%; transform:translateX(-50%); color:#fff; font-family:monospace; font-size:20px; text-shadow:1px 1px 2px black; white-space: pre-line; }
+    #levelUpPopup, #pauseScreen, #gameOverScreen {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 700px;
+        background: rgba(0, 0, 0, 0.95);
+        border: 4px solid #fff;
+        padding: 20px;
+        box-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+        z-index: 10;
+        text-align: center;
+        color: #fff;
+        font-family: monospace;
+        display: none; 
+    }
+    .upgrade-option {
+        width: 200px;
+        height: 150px;
+        margin: 10px;
+        padding: 10px;
+        display: inline-block;
+        border: 2px solid;
+        cursor: pointer;
+        transition: transform 0.1s;
+        text-align: left;
+    }
+    .upgrade-option:hover { transform: scale(1.05); }
+    .tier-1 { border-color: #808080; } 
+    .tier-2 { border-color: #00ff00; } 
+    .tier-3 { border-color: #0000ff; } 
+    .tier-4 { border-color: #800080; } 
+    .tier-5 { border-color: #ff0000; } 
+    .upgrade-name { font-size: 1.2em; font-weight: bold; margin-bottom: 5px; }
+    .upgrade-desc { font-size: 0.9em; }
+    .tier-label { font-size: 0.8em; margin-top: 5px; display: block; }
+    #manaBar { position:absolute; top:35px; left:10px; width:200px; height:15px; background:#333; border:2px solid #000; display: none; }
+    #manaFill { width:100%; height:100%; background:#0066ff; }
+</style>
+</head>
+<body>
+<div id="ui">HP: <span id="hp"></span> | Round: <span id="round"></span> | XP: <span id="xp"></span> | Level: <span id="level"></span> | Class: <span id="class"></span> | Soul: <span id="soul"></span></div>
+<div id="manaBar"><div id="manaFill"></div></div>
+<div id="hint">Press Space to shoot | Press P to Pause</div>
+<canvas id="gameWindow" width="980" height="600"></canvas>
+<div id="level20Choice" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:black; padding:20px; border:2px solid white; color:white; text-align:center;">
+    <h2>Level 20 Choice</h2>
+    <p>Continue to round 21 or leave with 50% soul penalty?</p>
+    <button onclick="continueGame()">Continue</button>
+    <button onclick="leaveGame()">Leave</button>
+</div>
+
+<div id="sleepMenu" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:black; padding:20px; border:2px solid white; color:white; text-align:center; z-index:15;">
+    <h2>Rest/Skip Rounds</h2>
+    <p>Choose how many rounds to skip (heal 50% HP):</p>
+    <button onclick="skipRounds(2)">Skip 2 Rounds</button>
+    <button onclick="skipRounds(4)">Skip 4 Rounds</button>
+    <button onclick="closeSleepMenu()">Cancel</button>
+</div>
+<script src="assets.js"></script>
+
+<div id="levelUpPopup">
+    <h2>Level Up! Choose an Upgrade</h2>
+    <div id="upgradeOptionsContainer"></div>
+</div>
+
+<div id="pauseScreen">
+    <h2>PAUSED</h2>
+    <p>Press P or ESC to Resume</p>
+    <div id="upgradesList" style="text-align:left; margin-top:20px; border-top:1px solid #555; padding-top:10px;"></div>
+</div>
+
+<button id="nextRoundButton" style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); padding:20px; font-size:24px; background:#333; color:#fff; border:none; cursor:pointer;">Next Round</button>
+
+<div id="gameOverScreen">
+    <h2>GAME OVER</h2>
+    <p>Round Reached: <span id="finalRound"></span></p>
+    <p>Total Damage Dealt: <span id="totalDamage"></span></p>
+    <p>Souls Earned: <span id="soulsEarned"></span></p>
+    <button onclick="location.reload()">Play Again</button>
+</div>
+
+<script>
+const canvas = document.getElementById("gameWindow");
+const ctx = canvas.getContext("2d");
+let keys = {};
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.getElementById("nextRoundButton").addEventListener('click', () => {
+    round++;
+    startRound();
+    roundAnnouncementText = "Round " + round + "!";
+    roundAnnouncementFrames = 120;
+    roundTransitionTimer = 0;
+    document.getElementById("nextRoundButton").style.display = 'none';
+});
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+const CRIT_CHANCE = 0.05; 
+const CRIT_MULTIPLIER = 2; 
+const EPSILON = 0.0001; 
+const MAX_PIERCING_BUFF = 8; 
+
+let shakeFrames = 0;
+let shakeIntensity = 0;
+let particles = [];
+let enemyProjectiles = [];
+let stars = Array.from({ length: 80 }, () => ({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, size: Math.random() * 2 + 1, brightness: Math.random() * 0.4 + 0.15 }));
+
+// Sound cooldown tracking
+let soundCooldowns = {};
+const SOUND_COOLDOWN_FRAMES = 5; // Minimum frames between same sound plays
+
+// Kill streak tracking
+let killStreak = [];
+const KILL_STREAK_WINDOW = 60; // 1 second at 60fps
+
+// Dynamic round transition
+let restPeriodTimer = 0;
+const REST_PERIOD_DURATION = 300; // 5 seconds
+
+// Footstep tracking
+let lastFootstepX = 0;
+let lastFootstepY = 0;
+const FOOTSTEP_DISTANCE = 30;
+
+// Sniper hold still tracking
+let sniperLastMoveTime = 0;
+let sniperHoldStillBonus = false;
+
+// Warlock soul siphon tracking
+let warlockKillCount = 0;
+
+// Second chance tracking
+let secondChanceUsed = false;
+
+// Pillars (destructible cover)
+let pillars = [];
+let bgOffsetX = 0;
+let bgOffsetY = 0;
+let displayHpRatio = 1;
+let displayBossHpRatio = 1;
+let sessionXpEarned = 0;
+let soulCurrency = 0;
+let totalXpEarned = 0;
+let bestRound = 0;
+let roundTransitionTimer = 0;
+let roundAnnouncementText = "";
+let roundAnnouncementFrames = 0;
+let totalDamageDealt = 0;
+let gameOver = false;
+
+let backgroundMusic;
+let playerHurtSound;
+let enemyHitSound;
+let shootSound;
+let skeletonSound;
+let zombieSound;
+let ultimateYell;
+let levelUpSound;
+let bossHitSound;
+let bossDeathSound;
+let level20ExitSound;
+let nutSound;
+ 
+
+function initializeSoundAssets() {
+    if(assets.audio.backgroundMusic) {
+        backgroundMusic = assets.audio.backgroundMusic;
+        backgroundMusic.loop = true;
+        backgroundMusic.volume = 0.4;
+    }
+    playerHurtSound = assets.audio.playerHurtSound;
+    enemyHitSound = assets.audio.enemyHitSound;
+    shootSound = assets.audio.shootSound;
+    skeletonSound = assets.audio.skeletonSound;
+    zombieSound = assets.audio.zombieSound;
+    ultimateYell = assets.audio.ultimateYell;
+    levelUpSound = assets.audio.levelUpSound;
+    bossHitSound = assets.audio.bossHitSound;
+    bossDeathSound = assets.audio.bossDeathSound;
+    enemyHitSound = assets.audio.enemyHitSound;
+    level20ExitSound = assets.audio.level20ExitSound;
+    nutSound = assets.audio.nutSound;
+}
+
+function playSound(audioElement, volume = 1.0, soundId = null, pitchVariation = false) {
+    if (!audioStarted || !audioElement) return;
+    
+    // Use the audio element's src as soundId if not provided
+    if (!soundId && audioElement.src) {
+        soundId = audioElement.src;
+    }
+    
+    // Check cooldown
+    if (soundId && soundCooldowns[soundId] && soundCooldowns[soundId] > 0) {
+        return;
+    }
+    
+    const soundClone = audioElement.cloneNode();
+    soundClone.volume = volume;
+    
+    // Add pitch variation for shots and other repetitive sounds
+    if (pitchVariation) {
+        soundClone.playbackRate = 0.9 + Math.random() * 0.2; // 0.9 to 1.1
+    }
+    
+    soundClone.play().catch(e => {});
+    
+    // Set cooldown
+    if (soundId) {
+        soundCooldowns[soundId] = SOUND_COOLDOWN_FRAMES;
+    }
+}
+
+// Audio ducking on player hurt
+function playHurtSound() {
+    if (!audioStarted || !playerHurtSound) return;
+    
+    // Duck background music
+    if (backgroundMusic) {
+        backgroundMusic.volume = 0.1;
+        setTimeout(() => {
+            if (backgroundMusic && !paused) {
+                backgroundMusic.volume = 0.4;
+            }
+        }, 200);
+    }
+    
+    playSound(playerHurtSound, 0.7);
+}
+
+// Kill streak sound
+function checkKillStreak() {
+    const now = performance.now();
+    killStreak = killStreak.filter(t => now - t < 1000); // Keep only kills within last second
+    
+    if (killStreak.length >= 5) {
+        // Play pitched up nut sound for kill streak
+        if (nutSound) {
+            const streakSound = nutSound.cloneNode();
+            streakSound.playbackRate = 1.3;
+            streakSound.volume = 0.8;
+            streakSound.play().catch(e => {});
+        }
+        damageTexts.push({ x: player.x + player.w/2, y: player.y - 40, text: "KILL STREAK!", isCrit: true, frames: 60 });
+    }
+}
+
+// Low HP heartbeat
+let heartbeatTimer = 0;
+function checkLowHPHeartbeat() {
+    if (player.hp < playerStats.maxHp * 0.2 && player.hp > 0) {
+        heartbeatTimer -= 1;
+        if (heartbeatTimer <= 0) {
+            heartbeatTimer = 30; // Beat every half second
+            if (playerHurtSound) {
+                const heartbeat = playerHurtSound.cloneNode();
+                heartbeat.volume = 0.3;
+                heartbeat.playbackRate = 0.5;
+                heartbeat.play().catch(e => {});
+            }
+        }
+    }
+}
+
+// Distance-based volume for boss sounds
+function getDistanceVolume(x, y) {
+    const dist = Math.hypot(x - player.x, y - player.y);
+    const maxDist = 800;
+    return Math.max(0.2, 1 - (dist / maxDist));
+}
+
+function updateSoundCooldowns() {
+    for (let id in soundCooldowns) {
+        if (soundCooldowns[id] > 0) {
+            soundCooldowns[id]--;
+        }
+    }
+}
+
+function bulletHitsRect(b, rect) {
+    // Check current position
+    if (b.x < rect.x + rect.w && b.x + b.w > rect.x && b.y < rect.y + rect.h && b.y + b.h > rect.y) {
+        return true;
+    }
+    
+    // Check previous position (for fast-moving bullets)
+    if (b.prevY !== undefined) {
+        if (b.x < rect.x + rect.w && b.x + b.w > rect.x && b.prevY < rect.y + rect.h && b.prevY + b.h > rect.y) {
+            return true;
+        }
+        
+        // Check the entire path between prevY and y
+        const minY = Math.min(b.prevY, b.y) - b.h;
+        const maxY = Math.max(b.prevY, b.y) + b.h;
+        if (b.x < rect.x + rect.w && b.x + b.w > rect.x && maxY > rect.y && minY < rect.y + rect.h) {
+            return true;
+        }
+    }
+    
+    // For horizontal movement (slash attacks)
+    if (b.prevX !== undefined) {
+        const minX = Math.min(b.prevX, b.x) - b.w;
+        const maxX = Math.max(b.prevX, b.x) + b.w;
+        if (maxX > rect.x && minX < rect.x + rect.w && b.y < rect.y + rect.h && b.y + b.h > rect.y) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+function circleRectOverlap(circle, rect) {
+    const closestX = Math.max(rect.x, Math.min(circle.x + circle.r, rect.x + rect.w));
+    const closestY = Math.max(rect.y, Math.min(circle.y + circle.r, rect.y + rect.h));
+    const dx = circle.x + circle.r - closestX;
+    const dy = circle.y + circle.r - closestY;
+    return dx * dx + dy * dy <= circle.r * circle.r;
+}
+
+function loadPersistentProgress() {
+    soulCurrency = Math.max(0, parseInt(localStorage.getItem('soulCurrency') || '0', 10));
+    bestRound = Math.max(0, parseInt(localStorage.getItem('bestRound') || '0', 10));
+    totalXpEarned = Math.max(0, parseInt(localStorage.getItem('totalXpEarned') || '0', 10));
+    hpBuffPercent = (parseInt(localStorage.getItem('hpBuffCount') || '0', 10) || 0) * 0.05;
+    speedBuffPercent = (parseInt(localStorage.getItem('speedBuffCount') || '0', 10) || 0) * 0.05;
+}
+
+function savePersistentProgress() {
+    localStorage.setItem('soulCurrency', Math.max(0, Math.floor(soulCurrency)));
+    localStorage.setItem('bestRound', bestRound);
+    localStorage.setItem('totalXpEarned', Math.max(0, Math.floor(totalXpEarned)));
+}
+
+function applyPersistentBuffs() {
+    if (playerStats) {
+        playerStats.maxHp = Math.round(playerStats.maxHp * (1 + hpBuffPercent));
+        playerStats.movementSpeed = playerStats.movementSpeed * (1 + speedBuffPercent);
+    }
+}
+
+function triggerShake(frames = 10) {
+    shakeFrames = Math.max(shakeFrames, frames);
+}
+
+// Particle system with max limit for performance
+const MAX_PARTICLES = 500;
+
+function spawnParticles(x, y, color, count) {
+    // Limit total particle count
+    const availableSlots = MAX_PARTICLES - particles.length;
+    if (availableSlots <= 0) return;
+    const actualCount = Math.min(count, availableSlots);
+    
+    for (let i = 0; i < actualCount; i++) {
+        particles.push({
+            x: x + Math.random() * 24 - 12,
+            y: y + Math.random() * 24 - 12,
+            vx: Math.random() * 4 - 2,
+            vy: Math.random() * -3 - 1,
+            size: Math.random() * 4 + 2,
+            alpha: 1,
+            color,
+        });
+    }
+}
+
+let paused = false; 
+let audioStarted = false;
+
+function togglePause() {
+    paused = !paused;
+    document.getElementById("pauseScreen").style.display = paused ? 'block' : 'none';
+    if (paused) {
+        if(backgroundMusic) backgroundMusic.pause();
+        document.getElementById("upgradesList").innerHTML = "<h3>Upgrades</h3>" + (playerUpgrades.length > 0 ? playerUpgrades.map(u => u.name).join('<br>') : "None yet");
+    } else {
+        if (audioStarted && backgroundMusic) backgroundMusic.play().catch(e => {}); 
+        requestAnimationFrame(loop); 
+    }
+}
+
+document.addEventListener("keydown", e => {
+    if ((e.key.toLowerCase() === 'p' || e.key === 'escape') && !gameOver && document.getElementById("levelUpPopup").style.display !== 'block') {
+        togglePause();
+    }
+});
+
+function handleFirstInteraction() {
+    if (!audioStarted && backgroundMusic) {
+        backgroundMusic.play().catch(e => console.log("Background music error:", e));
+        audioStarted = true;
+    }
+    // Remove all potential listeners to prevent duplicates
+    document.removeEventListener('keydown', handleFirstInteraction);
+    document.removeEventListener('click', handleFirstInteraction);
+}
+document.addEventListener('keydown', handleFirstInteraction);
+document.addEventListener('click', handleFirstInteraction); 
+
+const urlParams = new URLSearchParams(window.location.search);
+const birthdayMode = urlParams.get("birthday") === "true";
+const difficulty = urlParams.get("difficulty") || "medium";
+const playerName = (urlParams.get("name") || "").toLowerCase();
+const playerClass = urlParams.get("class") || "Ranger"; 
+
+const hardcoreNames = ["eliad ben ilay", "nehorai"];
+const hardcoreMode = hardcoreNames.includes(playerName) || urlParams.get("hardcore") === "true";
+
+let enemySpeedFactor = 1;
+let enemyHpFactor = 1;
+
+switch(difficulty){
+    case "easy": enemySpeedFactor=0.8; enemyHpFactor=0.8; break;
+    case "medium": enemySpeedFactor=1; enemyHpFactor=1; break; 
+    case "hard": enemySpeedFactor=1.3; enemyHpFactor=1.2; break;
+}
+
+function getClassStats(className) {
+    let stats = {
+        movementSpeed: 2.5,
+        damage: 25, 
+        regen: 0, 
+        bulletSpeed: 80,
+        shootCooldown: 15, 
+        maxHp: 100,
+        piercingHits: 1, 
+        critChanceBonus: 0, 
+        critMultiplier: CRIT_MULTIPLIER, 
+        bulletSizeMultiplier: 1.0, 
+        explosiveChance: 0.0,      
+        instaKillChance: 0.0,      
+        hasDashAbility: (className === "Revenant"), 
+        poolDuration: 180,
+        poolRadius: 40,
+        poolTick: 15,
+        poolDamage: 12,
+        berserkerRage: 0,
+        color: "#00eaff", 
+        isSummoner: (className === "Summoner")
+    };
+
+    switch(className) {
+        case "Gunner": stats.damage = 18; stats.shootCooldown = 8; stats.bulletSpeed = 100; stats.color = "#ff0000"; break;
+        case "Brawler": stats.damage = 40; stats.movementSpeed = 2; stats.maxHp = 120; stats.shootCooldown = 22; stats.color = "#8B4513"; break;
+        case "Acolyte": stats.damage = 21; stats.regen = 0.1 / 60; stats.maxHp = 110; stats.color = "#ffffff"; break;
+        case "Sniper": stats.damage = 55; stats.shootCooldown = 45; stats.bulletSpeed = 150; stats.color = "#00ff00"; break;
+        case "Scout": stats.movementSpeed = 4; stats.damage = 18; stats.shootCooldown = 14; stats.color = "#ffff00"; break;
+        case "Engineer": stats.damage = 13; stats.shootCooldown = 6; stats.bulletSpeed = 70; stats.color = "#808080"; break;
+        case "Templar": stats.maxHp = 150; stats.movementSpeed = 2.2; stats.damage = 30; stats.shootCooldown = 28; stats.color = "#FFD700"; break;
+        case "Ranger": stats.color = "#00eaff"; break; 
+        case "Berserker": stats.damage = 65; stats.shootCooldown = 65; stats.maxHp = 90; stats.color = "#8B0000"; stats.berserkerRage = 0.18; break;
+        case "Warlock": stats.damage = 25; stats.regen = 0.2 / 60; stats.shootCooldown = 20; stats.color = "#800080"; break;
+        
+        // FIXED SUMMONER CLASS
+        case "Summoner": 
+            stats.maxHp = 120; 
+            stats.movementSpeed = 2.2; 
+            stats.damage = 15; 
+            stats.shootCooldown = 12; 
+            stats.regen = 0.1 / 60; 
+            stats.color = "#0000ff";
+            stats.isSummoner = true;
+            stats.summonerMaxMinions = 10;
+            stats.summonerMinionDamage = 5;
+            stats.summonerMinionHp = 20;
+            break; 
+            
+        case "Alchemist": stats.maxHp = 110; stats.movementSpeed = 2; stats.damage = 20; stats.shootCooldown = 24; stats.regen = 0.08 / 60; stats.poolDuration = 180; stats.poolRadius = 40; stats.poolTick = 15; stats.poolDamage = 10; stats.color = "#00ff00"; break;
+        case "Paladin": stats.maxHp = 140; stats.movementSpeed = 1.8; stats.damage = 25; stats.shootCooldown = 18; stats.regen = 0.3 / 60; stats.color = "#add8e6"; break;
+        case "Revenant": stats.maxHp = 80; stats.movementSpeed = 3.5; stats.damage = 50; stats.shootCooldown = 10; stats.regen = 0; stats.color = "#000000"; break; 
+    }
+    
+    stats.bulletSpeed = stats.bulletSpeed > 0 ? stats.bulletSpeed : 10;
+    stats.shootCooldown = Math.max(1, stats.shootCooldown);
+
+    if(hardcoreMode){
+        stats.damage *= 0.25; 
+        stats.maxHp = 50;
+        stats.movementSpeed *= 1.2; 
+        stats.shootCooldown = Math.max(2, stats.shootCooldown / 2); 
+    }
+
+    // Balance: Sniper minimum range penalty
+    if (className === "Sniper") {
+        stats.minRange = 200; // Minimum distance for full damage
+        stats.minRangePenalty = 0.5; // 50% damage reduction when enemy is too close
+    }
+
+    // Balance: Berserker exhaustion system
+    if (className === "Berserker") {
+        stats.maxConsecutiveAttacks = 5;
+        stats.exhaustionCooldown = 120; // 2 seconds at 60fps
+        stats.exhaustionMultiplier = 2; // Doubles cooldown when exhausted
+    }
+
+    // Balance: Templar movement weight
+    if (className === "Templar" || className === "Paladin") {
+        stats.baseMaxHp = stats.maxHp; // Store base HP for movement weight calculation
+        stats.movementWeight = 0.2; // Speed reduction per 50 HP above base
+    }
+
+    return stats;
+}
+
+// FIXED SUMMONER MANA SYSTEM
+const player = {x:450, y:300, w:48, h:48, speed:4, hp:100, shootCooldown:0, hitEffectFrames: 0, isDashing: false, dashCooldown: 0}; 
+let playerMana = 100;
+let playerMaxMana = 100;
+const MANA_REGEN_RATE = 0.25; // Fixed: Better mana regen for Summoner
+const SUMMONER_MANA_COSTS = { 
+    zombie: 15, 
+    skeleton: 20, 
+    poison: 25, 
+    swordman: 30, 
+    ultimate: 100 
+};
+
+let bullets = [];
+let souls = [];
+let obstacles = [];
+let slowZones = [];
+let barrels = [];
+let enemies = [];
+let bosses = [];
+let round = 1;
+let playerXP = 0;
+let playerLevel = 1;
+let playerUpgrades = []; 
+let damageTexts = []; 
+let sentinels = []; 
+let pools = []; 
+let flashFrames = 0;
+let isRestRound = false;
+let level20Choice = false;
+
+loadPersistentProgress();
+let playerStats = getClassStats(playerClass);
+applyPersistentBuffs();
+player.hp = playerStats.maxHp;
+
+// Initialize Summoner mana
+if (playerClass === "Summoner") {
+    playerMaxMana = 100;
+    playerMana = 100;
+}
+
+function getXPNeeded(level, prestigeFactor = 1){
+    return Math.round((level * 5) + (level**2 * 1.5)) * prestigeFactor;
+}
+
+function gainXP(amount, enemyX = player.x, enemyY = player.y){
+    playerXP += amount;
+    sessionXpEarned += amount;
+    let xpNeeded = getXPNeeded(playerLevel);
+    while(playerXP >= xpNeeded){
+        playerXP -= xpNeeded;
+        playerLevel++;
+        // FIXED: Summoner ultimate at level 10
+        if (playerClass === "Summoner" && playerLevel % 10 === 0) {
+            spawnSummonerUltimateSwarm(player.x, player.y);
+        }
+        showLevelUpPopup();
+        xpNeeded = getXPNeeded(playerLevel); 
+    }
+}
+
+// FIXED: Better Summoner Ultimate
+function spawnSummonerUltimateSwarm(x, y) {
+    if(ultimateYell) playSound(ultimateYell);
+    spawnParticles(x, y, "#ff00ff", 30);
+    triggerShake(20);
+    
+    const minionTypes = ["zombie", "skeleton", "poison", "swordman"];
+    for (let t of minionTypes) {
+        for (let i = 0; i < 3; i++) {
+            sentinels.push({ 
+                x: x + Math.random() * 100 - 50, 
+                y: y + Math.random() * 100 - 50, 
+                w: 30, 
+                h: 30, 
+                type: t, 
+                hp: playerStats.summonerMinionHp * 2, 
+                damage: playerStats.summonerMinionDamage * 2, 
+                speed: 3, 
+                target: null, 
+                cooldown: 0,
+                lifetime: 600, // 10 seconds
+                distanceTravelled: 0
+            });
+        }
+    }
+    // Limit total sentinels
+    while (sentinels.length > 80) sentinels.shift();
+}
+
+// FIXED: Spawn individual summon with proper limits
+function spawnSummon(type) {
+    if (playerClass !== "Summoner") return false;
+    
+    const cost = SUMMONER_MANA_COSTS[type];
+    if (playerMana < cost) return false;
+    
+    // Check minion limit
+    const currentMinions = sentinels.filter(s => s.type === type).length;
+    if (currentMinions >= playerStats.summonerMaxMinions) {
+        damageTexts.push({ x: player.x, y: player.y - 30, text: "MAX MINIONS!", isCrit: false, frames: 30 });
+        return false;
+    }
+    
+    playerMana -= cost;
+    
+    sentinels.push({ 
+        x: player.x + Math.random() * 40 - 20, 
+        y: player.y + Math.random() * 40 - 20, 
+        w: 30, 
+        h: 30, 
+        type: type, 
+        hp: playerStats.summonerMinionHp, 
+        damage: playerStats.summonerMinionDamage, 
+        speed: 2, 
+        target: null, 
+        cooldown: 0,
+        lifetime: 900, // 15 seconds
+        distanceTravelled: 0
+    });
+    
+    // Play summon sound
+    if (type === 'zombie' && zombieSound) playSound(zombieSound, 0.5);
+    else if (type === 'skeleton' && skeletonSound) playSound(skeletonSound, 0.5);
+    else if (shootSound) playSound(shootSound, 0.3);
+    
+    spawnParticles(player.x, player.y, "#00ffff", 10);
+    return true;
+}
+
+const BOSS_EFFECTS = {
+    "Temporal Echo Shift": { desc: "+10% Multiplicative Cooldown Reduction.", effect: () => { playerStats.shootCooldown = Math.max(1, Math.round(playerStats.shootCooldown * 0.9)); } },
+    "Gravimetric Implosion": { desc: "+1 Max Piercing Hits.", effect: () => { playerStats.piercingHits = Math.min(MAX_PIERCING_BUFF, playerStats.piercingHits + 1); } },
+    "Life-Link Symbiosis": { desc: "+100 Max HP & +3% Lifesteal.", effect: () => { playerStats.maxHp += 100; addLifesteal(0.03, "Life-Link Symbiosis"); } },
+    "Aetherial Sealing": { desc: "+10% Crit Chance & +10 Damage.", effect: () => { playerStats.critChanceBonus = (playerStats.critChanceBonus || 0) + 0.1; playerStats.damage += 10; } },
+    "Arcane Expansion": { desc: "+25% Bullet Size.", effect: () => { playerStats.bulletSizeMultiplier *= 1.25; } },
+    "Phantasmal Replication": { desc: "-4 Frames Cooldown.", effect: () => { playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 4); } },
+    "Toxic Metabolism": { desc: "Massive +35 Damage.", effect: () => { playerStats.damage += 35; } },
+    "Thermal Detonator": { desc: "5% Chance for shots to Explode.", effect: () => { playerStats.explosiveChance = (playerStats.explosiveChance || 0) + 0.05; } },
+    "Runic Transference": { desc: "Huge +45 Damage.", effect: () => { playerStats.damage += 45; } },
+    "Aura of Dread": { desc: "+20% Crit Chance & Crit Multiplier 2.2x.", effect: () => { playerStats.critChanceBonus = (playerStats.critChanceBonus || 0) + 0.2; playerStats.critMultiplier = 2.2; } },
+    "Shadow Step": { desc: "Gain the Dash ability.", effect: () => { playerStats.hasDashAbility = true; } },
+    "Singularity Dash": { desc: "+2.5 Movement Speed & +25 Max HP.", effect: () => { playerStats.movementSpeed += 2.5; playerStats.maxHp += 25; } },
+    "Forced Fatigue": { desc: "+15 Damage & -3 Frames Cooldown.", effect: () => { playerStats.damage += 15; playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 3); } },
+    "Unraveling Strike": { desc: "+1 Max Piercing Hits & +10 Damage.", effect: () => { playerStats.piercingHits = Math.min(MAX_PIERCING_BUFF, playerStats.piercingHits + 1); playerStats.damage += 10; } },
+    "Soul Bind": { desc: "+0.25 HP/sec Regen & +50 Max HP.", effect: () => { playerStats.regen += 0.25 / 60; playerStats.maxHp += 50; } },
+    "Elemental Convergence": { desc: "Huge +50 Damage & +5% Crit Chance.", effect: () => { playerStats.damage += 50; playerStats.critChanceBonus = (playerStats.critChanceBonus || 0) + 0.05; } },
+    "Reality Anchor": { desc: "Ultimate +120 Max HP & Minor Regen.", effect: () => { playerStats.maxHp += 120; playerStats.regen += 0.05 / 60; } },
+    "Chrono Stutter": { desc: "Major -6 Frames Cooldown.", effect: () => { playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 6); } },
+    "Resource Siphon": { desc: "Major +5% Lifesteal.", effect: () => { addLifesteal(0.05, "Resource Siphon"); } },
+    "Void Fracture": { desc: "2% Chance for Instant Kill.", effect: () => { playerStats.instaKillChance = (playerStats.instaKillChance || 0) + 0.02; } },
+};
+
+function addLifesteal(amount, name) {
+    let lifestealUpgrade = playerUpgrades.find(u => u.type === "lifesteal"); 
+    if (!lifestealUpgrade) {
+        playerUpgrades.push({name: name + " (Lifesteal)", type: "lifesteal", value: amount, onHit: true});
+    } else {
+        lifestealUpgrade.value += amount;
+    }
+}
+
+function applyBossEffect(boss) {
+    const abilityName = boss.abilities[0]; 
+    const effect = BOSS_EFFECTS[abilityName];
+    if (effect) {
+        effect.effect();
+        playerUpgrades.push({ name: abilityName + " (Boss Buff)", desc: effect.desc, tier: "Boss", color: "tier-5" });
+        player.hp = playerStats.maxHp; 
+    }
+}
+
+const UPGRADES = [
+    // Generic upgrades
+    { name: "Slight Speed", desc: "+0.5 Movement Speed", tier: 1, color: "tier-1", effect: () => playerStats.movementSpeed += 0.5 },
+    { name: "Small Might", desc: "+5 Damage", tier: 1, color: "tier-1", effect: () => playerStats.damage += 5 },
+    { name: "Health Nudge", desc: "Slight HP Regen (0.05/sec)", tier: 1, color: "tier-1", effect: () => playerStats.regen += 0.05 / 60 },
+    { name: "Fast Cooldown", desc: "-1 Frame Cooldown", tier: 1, color: "tier-1", effect: () => playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 1) },
+    { name: "Swiftness", desc: "+1.0 Movement Speed", tier: 2, color: "tier-2", effect: () => playerStats.movementSpeed += 1.0 },
+    { name: "Power Focus", desc: "+10 Damage", tier: 2, color: "tier-2", effect: () => playerStats.damage += 10 },
+    { name: "Vitality Boost", desc: "+20 Max HP", tier: 2, color: "tier-2", effect: () => playerStats.maxHp += 20 },
+    { name: "Quick Shots", desc: "-2 Frame Cooldown", tier: 2, color: "tier-2", effect: () => playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 2) },
+    { name: "Phantom Steps", desc: "+1.5 Movement Speed, +10 Bullet Speed", tier: 3, color: "tier-3", effect: () => { playerStats.movementSpeed += 1.5; playerStats.bulletSpeed += 10; } },
+    { name: "Major Damage", desc: "+20 Damage", tier: 3, color: "tier-3", effect: () => playerStats.damage += 20 },
+    { name: "Rapid Regen", desc: "Significant HP Regen (0.2/sec)", tier: 3, color: "tier-3", effect: () => playerStats.regen += 0.2 / 60 },
+    { name: "Rapid Fire", desc: "-10% Cooldown", tier: 3, color: "tier-3", effect: () => playerStats.shootCooldown = Math.max(1, Math.round(playerStats.shootCooldown * 0.9)) },
+    { name: "Max HP Boost", desc: "+50 Max HP", tier: 3, color: "tier-3", effect: () => playerStats.maxHp += 50 },
+    { name: "Ethereal Form", desc: "+2.5 Movement Speed, +20 Bullet Speed", tier: 4, color: "tier-4", effect: () => { playerStats.movementSpeed += 2.5; playerStats.bulletSpeed += 20; } },
+    { name: "Annihilator", desc: "+40 Damage", tier: 4, color: "tier-4", effect: () => playerStats.damage += 40 },
+    { name: "Vampiric Touch", desc: "5% Lifesteal.", tier: 4, color: "tier-4", effect: () => addLifesteal(0.05, "Vampiric Touch") },
+    { name: "Infinity Focus", desc: "Major Cooldown Reduction (-5 Frames)", tier: 4, color: "tier-4", effect: () => playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 5) },
+    { name: "Piercing Rounds", desc: "+1 Max Hits per bullet", tier: 4, color: "tier-4", effect: () => playerStats.piercingHits = Math.min(MAX_PIERCING_BUFF, playerStats.piercingHits + 1) },
+    { name: "Godspeed", desc: "+5.0 Movement Speed, +50 Bullet Speed", tier: 5, color: "tier-5", effect: () => { playerStats.movementSpeed += 5.0; playerStats.bulletSpeed += 50; } },
+    { name: "Worldbreaker", desc: "+80 Damage", tier: 5, color: "tier-5", effect: () => playerStats.damage += 80 },
+    { name: "Phoenix Core", desc: "+100 Max HP, +0.5/sec Regen", tier: 5, color: "tier-5", effect: () => { playerStats.maxHp += 100; playerStats.regen += 0.5 / 60; } },
+    { name: "Temporal Rift", desc: "1 Frame Cooldown.", tier: 5, color: "tier-5", effect: () => playerStats.shootCooldown = 1 },
+    
+    // Berserker-specific upgrades (10+)
+    { name: "Berserker Fury", desc: "Damage scales with missing HP.", tier: 4, color: "tier-4", classes: ["Berserker"], effect: () => { playerStats.berserkerRage = (playerStats.berserkerRage || 0) + 0.08; } },
+    { name: "Blood Rage", desc: "+15% Berserker Rage", tier: 3, color: "tier-3", classes: ["Berserker"], effect: () => { playerStats.berserkerRage = (playerStats.berserkerRage || 0) + 0.15; } },
+    { name: "Unstoppable Force", desc: "+30 Damage, +15 Max HP", tier: 3, color: "tier-3", classes: ["Berserker"], effect: () => { playerStats.damage += 30; playerStats.maxHp += 15; } },
+    { name: "Adrenaline Rush", desc: "+2 Movement Speed when below 50% HP", tier: 4, color: "tier-4", classes: ["Berserker"], effect: () => { playerStats.movementSpeed += 2; } },
+    { name: "Savage Strikes", desc: "+15% Crit Chance", tier: 3, color: "tier-3", classes: ["Berserker"], effect: () => { playerStats.critChanceBonus += 0.15; } },
+    { name: "Reckless Power", desc: "+50 Damage, -10 Max HP", tier: 5, color: "tier-5", classes: ["Berserker"], effect: () => { playerStats.damage += 50; playerStats.maxHp = Math.max(50, playerStats.maxHp - 10); } },
+    { name: "Iron Will", desc: "+40 Max HP, +0.1/sec Regen", tier: 3, color: "tier-3", classes: ["Berserker"], effect: () => { playerStats.maxHp += 40; playerStats.regen += 0.1 / 60; } },
+    { name: "Frenzied Blows", desc: "-15 Frame Cooldown", tier: 4, color: "tier-4", classes: ["Berserker"], effect: () => { playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 15); } },
+    { name: "Death Wish", desc: "+25% Crit Multiplier", tier: 5, color: "tier-5", classes: ["Berserker"], effect: () => { playerStats.critMultiplier = (playerStats.critMultiplier || 2) + 0.25; } },
+    { name: "Battle Hardened", desc: "+60 Max HP", tier: 4, color: "tier-4", classes: ["Berserker"], effect: () => { playerStats.maxHp += 60; } },
+    
+    // Warlock-specific upgrades (10+)
+    { name: "Dark Pact", desc: "+0.3/sec HP Regen", tier: 3, color: "tier-3", classes: ["Warlock"], effect: () => { playerStats.regen += 0.3 / 60; } },
+    { name: "Void Mastery", desc: "+15 Damage, +0.2/sec Regen", tier: 3, color: "tier-3", classes: ["Warlock"], effect: () => { playerStats.damage += 15; playerStats.regen += 0.2 / 60; } },
+    { name: "Soul Drain", desc: "8% Lifesteal", tier: 4, color: "tier-4", classes: ["Warlock"], effect: () => { addLifesteal(0.08, "Soul Drain"); } },
+    { name: "Arcane Shield", desc: "+50 Max HP", tier: 2, color: "tier-2", classes: ["Warlock"], effect: () => { playerStats.maxHp += 50; } },
+    { name: "Void Rift", desc: "+25 Damage, +10% Crit Chance", tier: 4, color: "tier-4", classes: ["Warlock"], effect: () => { playerStats.damage += 25; playerStats.critChanceBonus += 0.1; } },
+    { name: "Eternal Darkness", desc: "+40 Damage, +0.5/sec Regen", tier: 5, color: "tier-5", classes: ["Warlock"], effect: () => { playerStats.damage += 40; playerStats.regen += 0.5 / 60; } },
+    { name: "Mana Surge", desc: "+30 Max HP, -5 Frame Cooldown", tier: 3, color: "tier-3", classes: ["Warlock"], effect: () => { playerStats.maxHp += 30; playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 5); } },
+    { name: "Corrupted Soul", desc: "+10% Crit Chance, +5% Lifesteal", tier: 4, color: "tier-4", classes: ["Warlock"], effect: () => { playerStats.critChanceBonus += 0.1; addLifesteal(0.05, "Corrupted Soul"); } },
+    { name: "Abyssal Power", desc: "+60 Damage", tier: 5, color: "tier-5", classes: ["Warlock"], effect: () => { playerStats.damage += 60; } },
+    { name: "Shadow Veil", desc: "+1.5 Movement Speed, +15 Max HP", tier: 2, color: "tier-2", classes: ["Warlock"], effect: () => { playerStats.movementSpeed += 1.5; playerStats.maxHp += 15; } },
+    
+    // Summoner-specific upgrades (10+)
+    { name: "Minion Master", desc: "+2 Max Minions", tier: 3, color: "tier-3", classes: ["Summoner"], effect: () => { playerStats.summonerMaxMinions += 2; } },
+    { name: "Minion Damage", desc: "+2 Minion Damage", tier: 3, color: "tier-3", classes: ["Summoner"], effect: () => { playerStats.summonerMinionDamage += 2; } },
+    { name: "Minion Health", desc: "+10 Minion HP", tier: 3, color: "tier-3", classes: ["Summoner"], effect: () => { playerStats.summonerMinionHp += 10; } },
+    { name: "Mana Efficiency", desc: "-20% Summon Costs", tier: 4, color: "tier-4", classes: ["Summoner"], effect: () => { 
+        for (let key in SUMMONER_MANA_COSTS) { SUMMONER_MANA_COSTS[key] = Math.max(5, Math.floor(SUMMONER_MANA_COSTS[key] * 0.8)); }
+    }},
+    { name: "Soulblade Arsenal", desc: "+20 Minion Damage and +1 Summon Slot", tier: 5, color: "tier-5", classes: ["Summoner"], effect: () => { playerStats.summonerMinionDamage += 20; playerStats.summonerMaxMinions += 1; } },
+    { name: "Necromancer's Touch", desc: "+5 Minion Damage, +15 Minion HP", tier: 2, color: "tier-2", classes: ["Summoner"], effect: () => { playerStats.summonerMinionDamage += 5; playerStats.summonerMinionHp += 15; } },
+    { name: "Hive Mind", desc: "+3 Max Minions, +3 Minion Damage", tier: 4, color: "tier-4", classes: ["Summoner"], effect: () => { playerStats.summonerMaxMinions += 3; playerStats.summonerMinionDamage += 3; } },
+    { name: "Undying Army", desc: "+25 Minion HP, +0.2/sec Regen", tier: 4, color: "tier-4", classes: ["Summoner"], effect: () => { playerStats.summonerMinionHp += 25; playerStats.regen += 0.2 / 60; } },
+    { name: "Dark Ritual", desc: "+40 Max HP, +3 Max Minions", tier: 3, color: "tier-3", classes: ["Summoner"], effect: () => { playerStats.maxHp += 40; playerStats.summonerMaxMinions += 3; } },
+    { name: "Legion Commander", desc: "+5 Max Minions, +8 Minion Damage", tier: 5, color: "tier-5", classes: ["Summoner"], effect: () => { playerStats.summonerMaxMinions += 5; playerStats.summonerMinionDamage += 8; } },
+    
+    // Ranger-specific upgrades
+    { name: "Hunter's Mark", desc: "+12 Damage, +8% Crit Chance", tier: 3, color: "tier-3", classes: ["Ranger"], effect: () => { playerStats.damage += 12; playerStats.critChanceBonus += 0.08; } },
+    { name: "Wilderness Survival", desc: "+30 Max HP, +0.15/sec Regen", tier: 3, color: "tier-3", classes: ["Ranger"], effect: () => { playerStats.maxHp += 30; playerStats.regen += 0.15 / 60; } },
+    { name: "Eagle Eye", desc: "+20% Crit Chance", tier: 4, color: "tier-4", classes: ["Ranger"], effect: () => { playerStats.critChanceBonus += 0.2; } },
+    { name: "Nature's Blessing", desc: "+40 Max HP, +5% Lifesteal", tier: 4, color: "tier-4", classes: ["Ranger"], effect: () => { playerStats.maxHp += 40; addLifesteal(0.05, "Nature's Blessing"); } },
+    { name: "Perfect Shot", desc: "+35 Damage, +15% Crit Chance", tier: 5, color: "tier-5", classes: ["Ranger"], effect: () => { playerStats.damage += 35; playerStats.critChanceBonus += 0.15; } },
+];
+
+const PASSIVE_UPGRADES = [
+    { name: "Passive Regen", desc: "+0.1/sec HP Regen", effect: () => playerStats.regen += 0.1 / 60 },
+    { name: "Max HP Boost", desc: "+10 Max HP", effect: () => playerStats.maxHp += 10 },
+    { name: "Speed Boost", desc: "+0.5 Movement Speed", effect: () => playerStats.movementSpeed += 0.5 },
+    { name: "Bullet Speed Boost", desc: "+5 Bullet Speed", effect: () => playerStats.bulletSpeed += 5 },
+    { name: "Cooldown Reduction", desc: "-1 Frame Cooldown", effect: () => playerStats.shootCooldown = Math.max(1, playerStats.shootCooldown - 1) },
+    { name: "Damage Boost", desc: "+5 Damage", effect: () => playerStats.damage += 5 },
+];
+
+const TIER_CHANCES = [
+    { level: 1,  chances: { 1: 70, 2: 20, 3: 8, 4: 2, 5: 0 } },
+    { level: 4,  chances: { 1: 50, 2: 30, 3: 15, 4: 5, 5: 0 } },
+    { level: 8,  chances: { 1: 35, 2: 35, 3: 20, 4: 8, 5: 2 } },
+    { level: 13, chances: { 1: 20, 2: 35, 3: 30, 4: 12, 5: 3 } },
+    { level: 21, chances: { 1: 10, 2: 25, 3: 35, 4: 20, 5: 10 } }
+];
+
+function getUpgradeChances(level) {
+    let activeChances = TIER_CHANCES[0].chances;
+    for (const chance of TIER_CHANCES) {
+        if (level >= chance.level) { activeChances = chance.chances; }
+    }
+    return activeChances;
+}
+
+function getRandomTier(level) {
+    const chances = getUpgradeChances(level);
+    let rand = Math.random() * 100;
+    let cumulative = 0;
+    for (let tier = 1; tier <= 5; tier++) {
+        cumulative += chances[tier];
+        if (rand < cumulative) { return tier; }
+    }
+    return 1; 
+}
+
+function getThreeUniqueUpgrades() {
+    if (isRestRound) {
+        const available = PASSIVE_UPGRADES;
+        const selected = new Set();
+        const result = [];
+        while (result.length < 3 && available.length > selected.size) {
+            const randomIndex = Math.floor(Math.random() * available.length);
+            const upgrade = available[randomIndex];
+            if (!selected.has(upgrade)) {
+                selected.add(upgrade);
+                result.push(upgrade);
+            }
+        }
+        return result;
+    } else {
+        const availableUpgrades = [...UPGRADES].filter(u => !u.classes || u.classes.includes(playerClass));
+        const selectedUpgrades = new Set();
+        const result = [];
+        const level = playerLevel;
+        const tiers = [getRandomTier(level), getRandomTier(level), getRandomTier(level)];
+
+        for (const targetTier of tiers) {
+            let tierPool = availableUpgrades.filter(u => u.tier === targetTier && !selectedUpgrades.has(u));
+            if(playerStats.piercingHits >= MAX_PIERCING_BUFF) { tierPool = tierPool.filter(u => u.name !== "Piercing Rounds"); }
+            if (tierPool.length === 0) {
+                tierPool = availableUpgrades.filter(u => !selectedUpgrades.has(u));
+                if(playerStats.piercingHits >= MAX_PIERCING_BUFF) { tierPool = tierPool.filter(u => u.name !== "Piercing Rounds"); }
+            }
+            if (tierPool.length > 0) {
+                const randomIndex = Math.floor(Math.random() * tierPool.length);
+                const upgrade = tierPool[randomIndex];
+                result.push(upgrade);
+                selectedUpgrades.add(upgrade);
+            } else { break; }
+        }
+        return result;
+    }
+}
+
+function selectUpgrade(upgrade) {
+    paused = false;
+    document.getElementById("levelUpPopup").style.display = 'none';
+    upgrade.effect();
+    playerUpgrades.push(upgrade);
+    if (!isRestRound) {
+        player.hp = Math.min(playerStats.maxHp, player.hp + Math.round(playerStats.maxHp * 0.2));
+    }
+    if (audioStarted && backgroundMusic) backgroundMusic.play().catch(e => {});
+    if (isRestRound) {
+        isRestRound = false;
+        round++;
+        startRound();
+    }
+    // Restart the game loop
+    requestAnimationFrame(loop);
+}
+
+function showLevelUpPopup() {
+    paused = true;
+    if(backgroundMusic) backgroundMusic.pause(); 
+    if (playerClass === "Summoner") {
+        if(ultimateYell) playSound(ultimateYell);
+        const types = ["zombie", "skeleton", "poison", "swordman"];
+        for (let t of types) {
+            for (let i = 0; i < 5; i++) {
+                sentinels.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, w: 30, h: 30, type: t, hp: playerStats.summonerMinionHp, damage: playerStats.summonerMinionDamage, speed: 2, target: null, cooldown: 0, lifetime: 600 });
+            }
+        }
+    }
+    if(levelUpSound) playSound(levelUpSound);
+
+    const options = getThreeUniqueUpgrades();
+    const container = document.getElementById("upgradeOptionsContainer");
+    container.innerHTML = '';
+
+    options.forEach(upgrade => {
+        const optionDiv = document.createElement('div');
+        optionDiv.className = `upgrade-option ${upgrade.color}`;
+        optionDiv.innerHTML = `<span class="upgrade-name">${upgrade.name}</span><span class="tier-label">Tier ${upgrade.tier}</span><hr style="border-color: inherit; margin: 5px 0;"><span class="upgrade-desc">${upgrade.desc}</span>`;
+        optionDiv.onclick = () => selectUpgrade(upgrade);
+        container.appendChild(optionDiv);
+    });
+
+    document.getElementById("levelUpPopup").style.display = 'block';
+}
+
+function startRound(){
+    if (round === 20) {
+        level20Choice = true;
+        document.getElementById("level20Choice").style.display = 'block';
+        return;
+    }
+    if (round % 5 === 0 && round > 0) {
+        isRestRound = true;
+        showLevelUpPopup();
+        return;
+    }
+    enemies = [];
+    if(round % 5 === 0){ spawnBoss(); }
+    
+    const BASE_ENEMY_HP = 30;
+    const SCALING_HP_PER_ROUND = 8;
+    let budget = round * 10 + 20;
+    let roundSpeedFactor = enemySpeedFactor;
+    let roundHpFactor = enemyHpFactor;
+    const isEarlyHard = difficulty === "hard" && round <= 3;
+    if (isEarlyHard) { roundSpeedFactor = 1.0; roundHpFactor = 0.95; }
+    
+    while (budget > 0) {
+        let type, cost;
+        const roll = Math.random();
+        if (round < 3 || isEarlyHard) {
+            if (roll < 0.7) { type = "melee"; cost = 1; }
+            else if (roll < 0.9) { type = "ranged"; cost = 3; }
+            else { type = "shielder"; cost = 4; }
+        } else if (roll < 0.4) { type = "melee"; cost = 1; }
+        else if (roll < 0.6) { type = "ranged"; cost = 3; }
+        else if (roll < 0.75) { type = "charger"; cost = 5; }
+        else if (roll < 0.85) { type = "flanker"; cost = 2; }
+        else if (roll < 0.95) { type = "shielder"; cost = 4; }
+        else { type = "elite"; cost = 7; }
+        
+        if (budget >= cost) {
+            budget -= cost;
+            let spawnX = Math.random() * canvas.width;
+            let spawnY = Math.random() * canvas.height;
+            while (Math.hypot(spawnX - player.x, spawnY - player.y) < 150) {
+                spawnX = Math.random() * canvas.width;
+                spawnY = Math.random() * canvas.height;
+            }
+            let enemyMaxHp = (BASE_ENEMY_HP + round * SCALING_HP_PER_ROUND) * roundHpFactor * (1 + (round * 0.1));
+            let speed = (0.6 + round * 0.12) * roundSpeedFactor;
+            if (type === "ranged") speed *= 0.85;
+            if (type === "charger") speed *= 0.7;
+            if (type === "flanker") speed *= 1.1;
+            if (type === "shielder") speed *= 0.9;
+            if (type === "elite") speed *= 1.2;
+
+            enemies.push({ x:spawnX, y:spawnY, w:48, h:48, hp: enemyMaxHp, maxHp: enemyMaxHp, type: type, speed: speed, shootCooldown: 60, chargeTimer: 0, isCharging: false, hitEffectFrames: 0 });
+        }
+    }
+    generateEnvironment();
+}
+
+function generateEnvironment() {
+    obstacles = []; slowZones = []; barrels = [];
+    for (let i = 0; i < 3 + Math.floor(Math.random() * 3); i++) {
+        obstacles.push({ x: Math.random() * (canvas.width - 50), y: Math.random() * (canvas.height - 50), w: 50, h: 50 });
+    }
+    for (let i = 0; i < 1 + Math.floor(Math.random() * 2); i++) {
+        slowZones.push({ x: Math.random() * (canvas.width - 100), y: Math.random() * (canvas.height - 100), w: 100, h: 100 });
+    }
+    for (let i = 0; i < 1 + Math.floor(Math.random() * 3); i++) {
+        barrels.push({ x: Math.random() * (canvas.width - 30), y: Math.random() * (canvas.height - 30), w: 30, h: 30, alive: true });
+    }
+}
+
+function spawnBoss(){
+    const BOSS_HP_MULTIPLIER = 1000;
+    const BOSS_SPEED = 1;
+    const BOSS_XP = 50;
+    let bossHp = BOSS_HP_MULTIPLIER + round * 250;
+    const bossAbility = generateBossAbilities();
+    let boss = { x: canvas.width/2 - 64, y: 50, w: 128, h: 128, hp: bossHp, maxHp: bossHp, speed: BOSS_SPEED, abilities: bossAbility, name: bossAbility[0], xp: BOSS_XP, alive: true, hitEffectFrames: 0 };
+    bosses.push(boss);
+}
+
+const BOSS_ABILITY_KEYS = Object.keys(BOSS_EFFECTS);
+
+function generateBossAbilities() {
+    let tierIndex = Math.floor((round - 1) / 5);
+    let start, end;
+    if (tierIndex === 0) { start = 0; end = 5; } 
+    else if (tierIndex === 1) { start = 5; end = 10; } 
+    else if (tierIndex === 2) { start = 10; end = 15; } 
+    else if (tierIndex >= 3) { start = 15; end = 20; } 
+    else { start = 0; end = 5; }
+
+    let availableAbilities = BOSS_ABILITY_KEYS.slice(start, end);
+    if (round >= 25) { availableAbilities = BOSS_ABILITY_KEYS; }
+    let ability = availableAbilities[Math.floor(Math.random() * availableAbilities.length)];
+    return [ability];
+}
+
+function shoot(){
+    if(player.shootCooldown>0 || gameOver || paused) return;
+    
+    // FIXED: Summoner shoots orbs instead of bullets
+    if (playerClass === "Summoner") {
+        const effectiveCritChance = CRIT_CHANCE + (playerStats.critChanceBonus || 0);
+        bullets.push({ 
+            x: player.x + player.w/2 - 5, 
+            y: player.y, 
+            w: 10 * playerStats.bulletSizeMultiplier, 
+            h: 10 * playerStats.bulletSizeMultiplier, 
+            speed: 70, 
+            damage: playerStats.damage, 
+            isCrit: Math.random() < effectiveCritChance, 
+            hitsLeft: playerStats.piercingHits, 
+            type: "orb",
+            isExplosive: Math.random() < playerStats.explosiveChance
+        });
+        if(shootSound) playSound(shootSound, 0.4);
+        player.shootCooldown = playerStats.shootCooldown;
+        return;
+    }
+    
+    const effectiveCritChance = CRIT_CHANCE + (playerStats.critChanceBonus || 0);
+    let bulletDamage = playerStats.damage;
+    
+    // Balance: Sniper minimum range penalty
+    if (playerClass === "Sniper" && playerStats.minRange) {
+        // Find nearest enemy to calculate range penalty
+        let nearestEnemyDist = Infinity;
+        enemies.forEach(e => {
+            let dist = Math.hypot(e.x - player.x, e.y - player.y);
+            if (dist < nearestEnemyDist) nearestEnemyDist = dist;
+        });
+        if (nearestEnemyDist < playerStats.minRange) {
+            bulletDamage = Math.round(bulletDamage * playerStats.minRangePenalty);
+        }
+    }
+    
+    // Balance: Berserker exhaustion system
+    if (playerClass === "Berserker") {
+        if (!player.consecutiveAttacks) player.consecutiveAttacks = 0;
+        player.consecutiveAttacks++;
+        if (player.consecutiveAttacks > playerStats.maxConsecutiveAttacks) {
+            player.exhausted = true;
+            player.exhaustionTimer = playerStats.exhaustionCooldown;
+        }
+        if (player.exhausted) {
+            playerStats.shootCooldown = playerStats.shootCooldown * playerStats.exhaustionMultiplier;
+        }
+    }
+    
+    if (playerClass === "Berserker") {
+        bulletDamage += Math.round((playerStats.maxHp - player.hp) * (playerStats.berserkerRage || 0.18));
+    }
+    let bulletW = 4 * playerStats.bulletSizeMultiplier; 
+    let bulletH = 20 * playerStats.bulletSizeMultiplier; 
+    let bulletSpeed = playerStats.bulletSpeed;
+    let bulletY = player.y;
+    let bulletX = player.x+player.w/2-bulletW/2;
+    let bulletType = "default";
+
+    const isBerserkerMelee = playerClass === "Berserker";
+    if (playerClass === "Revenant") {
+        bulletType = "slash"; bulletSpeed = 200; bulletW = 40 * playerStats.bulletSizeMultiplier; bulletH = 15 * playerStats.bulletSizeMultiplier;
+        bulletX = player.x + player.w/2 - bulletW/2; bulletY = player.y - bulletH;
+    } else if (playerClass === "Templar") {
+        bulletType = "slash"; bulletSpeed = 150; bulletW = 50 * playerStats.bulletSizeMultiplier; bulletH = 20 * playerStats.bulletSizeMultiplier;
+        bulletX = player.x + player.w/2 - bulletW/2; bulletY = player.y - bulletH;
+    } else if (isBerserkerMelee) {
+        bulletType = "berserkerSlash"; bulletSpeed = 0; bulletW = 80 * playerStats.bulletSizeMultiplier; bulletH = 30 * playerStats.bulletSizeMultiplier;
+        bulletX = player.x + player.w/2 - bulletW/2; bulletY = player.y - bulletH;
+    }
+
+    if (playerClass === "Alchemist") {
+        pools.push({ x: player.x + player.w / 2 - playerStats.poolRadius, y: player.y + player.h - playerStats.poolRadius / 2, r: playerStats.poolRadius, timer: playerStats.poolDuration, tickTimer: 0, damage: playerStats.poolDamage });
+    } else {
+        bullets.push({ x: bulletX, y: bulletY, w: bulletW, h: bulletH, speed: bulletSpeed, damage: bulletDamage, isCrit: Math.random() < effectiveCritChance, hitsLeft: isBerserkerMelee ? 1 : playerStats.piercingHits, type: bulletType, isExplosive: Math.random() < playerStats.explosiveChance, timer: isBerserkerMelee ? 10 : undefined });
+    }
+    
+    if(shootSound) playSound(shootSound, 0.4); 
+    player.shootCooldown = playerStats.shootCooldown; 
+    document.getElementById("hint").style.display="none";
+}
+
+function update(deltaMs){
+    if(gameOver || paused) return;
+    const dt = Math.min(deltaMs / 1000, 0.04);
+    const timeFactor = dt * 60;
+    
+    // Update sound cooldowns
+    updateSoundCooldowns();
+
+    const actualHpRatio = player.hp / playerStats.maxHp;
+    displayHpRatio += (actualHpRatio - displayHpRatio) * Math.min(1, 12 * dt);
+    if (bosses.length > 0) {
+        const bossRatio = Math.max(0, Math.min(1, bosses[0].hp / bosses[0].maxHp));
+        displayBossHpRatio += (bossRatio - displayBossHpRatio) * Math.min(1, 12 * dt);
+    }
+
+    damageTexts.forEach(t => { t.y -= 20 * dt; t.frames -= timeFactor; });
+    damageTexts = damageTexts.filter(t => t.frames > 0);
+    player.hp = Math.min(playerStats.maxHp, player.hp + playerStats.regen * timeFactor);
+
+    // FIXED: Better mana regen for Summoner
+    if (playerClass === "Summoner") {
+        playerMana = Math.min(playerMaxMana, playerMana + MANA_REGEN_RATE * timeFactor);
+    }
+
+    if (playerStats.hasDashAbility) {
+        if (player.dashCooldown > 0) { player.dashCooldown = Math.max(0, player.dashCooldown - timeFactor); }
+        if ((keys["c"] || keys["shift"]) && player.dashCooldown === 0) { player.isDashing = true; player.dashCooldown = 60; }
+        if (player.isDashing) {
+            const dashSpeed = playerStats.movementSpeed * 5;
+            if(keys["w"]) player.y -= dashSpeed * timeFactor;
+            if(keys["s"]) player.y += dashSpeed * timeFactor;
+            if(keys["a"]) player.x -= dashSpeed * timeFactor;
+            if(keys["d"]) player.x += dashSpeed * timeFactor;
+            player.isDashing = false;
+        }
+    }
+
+    if(!player.isDashing) {
+        let speed = playerStats.movementSpeed;
+        slowZones.forEach(zone => {
+            if (player.x < zone.x + zone.w && player.x + player.w > zone.x && player.y < zone.y + zone.h && player.y + player.h > zone.y) { speed *= 0.5; }
+        });
+        if(keys["w"]) player.y -= speed * timeFactor;
+        if(keys["s"]) player.y += speed * timeFactor;
+        if(keys["a"]) player.x -= speed * timeFactor;
+        if(keys["d"]) player.x += speed * timeFactor;
+    }
+
+    obstacles.forEach(obs => {
+        if (player.x < obs.x + obs.w && player.x + player.w > obs.x && player.y < obs.y + obs.h && player.y + player.h > obs.y) {
+            let overlapX = Math.min(player.x + player.w - obs.x, obs.x + obs.w - player.x);
+            let overlapY = Math.min(player.y + player.h - obs.y, obs.y + obs.h - player.y);
+            if (overlapX < overlapY) { if (player.x < obs.x) player.x -= overlapX; else player.x += overlapX; }
+            else { if (player.y < obs.y) player.y -= overlapY; else player.y += overlapY; }
+        }
+    });
+
+    player.x = Math.max(0, Math.min(canvas.width - player.w, player.x));
+    player.y = Math.max(0, Math.min(canvas.height - player.h, player.y));
+    if(keys[" "]) shoot();
+
+    // FIXED: Summoner summon controls (1-5 keys) with cooldowns
+    if (playerClass === "Summoner") {
+        if (!player.summonCooldown) player.summonCooldown = 0;
+        if (player.summonCooldown > 0) player.summonCooldown -= timeFactor;
+        
+        const summonCooldownTime = 30; // 0.5 second cooldown between summons
+        
+        if (keys["1"] && player.summonCooldown <= 0) { 
+            if (spawnSummon('zombie')) {
+                player.summonCooldown = summonCooldownTime;
+            }
+            keys["1"] = false; 
+        }
+        if (keys["2"] && player.summonCooldown <= 0) { 
+            if (spawnSummon('skeleton')) {
+                player.summonCooldown = summonCooldownTime;
+            }
+            keys["2"] = false; 
+        }
+        if (keys["3"] && player.summonCooldown <= 0) { 
+            if (spawnSummon('poison')) {
+                player.summonCooldown = summonCooldownTime;
+            }
+            keys["3"] = false; 
+        }
+        if (keys["4"] && player.summonCooldown <= 0) { 
+            if (spawnSummon('swordman')) {
+                player.summonCooldown = summonCooldownTime;
+            }
+            keys["4"] = false; 
+        }
+        if (keys["5"]) { 
+            if (playerMana >= SUMMONER_MANA_COSTS.ultimate) {
+                playerMana -= SUMMONER_MANA_COSTS.ultimate;
+                spawnSummonerUltimateSwarm(player.x, player.y);
+                player.summonCooldown = 60; // 1 second cooldown after ultimate
+            }
+            keys["5"] = false; 
+        }
+    }
+    
+    // Warlock ultimate ability - kill all enemies on screen (Q key)
+    if (playerClass === "Warlock" && keys["q"]) {
+        if (playerMana >= 80) {
+            playerMana -= 80;
+            if(ultimateYell) playSound(ultimateYell);
+            spawnParticles(player.x, player.y, "#800080", 40);
+            triggerShake(25);
+            
+            // Kill all enemies
+            enemies.forEach(e => {
+                e.hp = 0;
+                gainXP(1, e.x, e.y);
+                spawnParticles(e.x + e.w/2, e.y + e.h/2, "#800080", 8);
+            });
+            enemies = [];
+            
+            // Damage boss heavily
+            bosses.forEach(boss => {
+                boss.hp -= boss.maxHp * 0.5;
+                boss.hitEffectFrames = 10;
+                damageTexts.push({ x: boss.x + boss.w/2, y: boss.y + boss.h/2, text: "WARLOCK ULTIMATE!", isCrit: true, frames: 60 });
+            });
+            
+            keys["q"] = false;
+        }
+    }
+
+    if(player.shootCooldown > 0) player.shootCooldown = Math.max(0, player.shootCooldown - timeFactor);
+
+    bullets.forEach(b => {
+        b.prevY = b.y;
+        if (b.type === "berserkerSlash") {
+            b.x = player.x + player.w / 2 - b.w / 2;
+            b.y = player.y - b.h;
+            b.timer -= timeFactor;
+            if (b.timer <= 0) b.hitsLeft = 0;
+        } else if (b.type === "slash") { b.y -= b.speed * timeFactor * 2; }
+        else { b.y -= b.speed * timeFactor; }
+        obstacles.forEach(obs => {
+            if (b.x < obs.x + obs.w && b.x + b.w > obs.x && b.y < obs.y + obs.h && b.y + b.h > obs.y) { b.hitsLeft = 0; }
+        });
+    });
+    bullets = bullets.filter(b => b.hitsLeft > 0 && (b.type === "berserkerSlash" ? b.timer > 0 : b.y > -40) && (b.type !== "slash" || b.y > player.y - 100));
+
+    pools.forEach(p => {
+        p.timer -= timeFactor; p.tickTimer -= timeFactor;
+        if (p.tickTimer <= 0) {
+            p.tickTimer = playerStats.poolTick;
+            enemies.forEach(e => {
+                if (circleRectOverlap(p, e)) {
+                    e.hp -= p.damage; totalDamageDealt += p.damage; e.hitEffectFrames = 5;
+                    damageTexts.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, text: p.damage.toFixed(0), isCrit: false, frames: 25 });
+                    spawnParticles(e.x + e.w / 2, e.y + e.h / 2, "#52ff72", 2);
+                }
+            });
+            bosses.forEach(boss => {
+                if (circleRectOverlap(p, boss)) {
+                    boss.hp -= p.damage; totalDamageDealt += p.damage; boss.hitEffectFrames = 5;
+                    damageTexts.push({ x: boss.x + boss.w / 2, y: boss.y + boss.h / 2, text: p.damage.toFixed(0), isCrit: false, frames: 25 });
+                }
+            });
+        }
+    });
+    pools = pools.filter(p => p.timer > 0);
+
+    enemyProjectiles.forEach(p => { p.x += p.vx * timeFactor; p.y += p.vy * timeFactor; });
+    enemyProjectiles = enemyProjectiles.filter(p => !p.hit && p.x > -40 && p.x < canvas.width + 40 && p.y > -40 && p.y < canvas.height + 40);
+
+    souls.forEach(s => {
+        s.y += 50 * timeFactor;
+        if (s.x < player.x + player.w && s.x + s.w > player.x && s.y < player.y + player.h && s.y + s.h > player.y) {
+            soulCurrency++; souls.splice(souls.indexOf(s), 1);
+            if(shootSound) playSound(shootSound, 0.3);
+        }
+    });
+    souls = souls.filter(s => s.y < canvas.height + 10);
+
+    enemyProjectiles.forEach(p => {
+        if (p.x < player.x + player.w && p.x + p.w > player.x && p.y < player.y + player.h && p.y + p.h > player.y) {
+            let previousHP = player.hp;
+            player.hp -= p.damage; p.hit = true;
+            if (player.hp < previousHP) { if(playerHurtSound) playSound(playerHurtSound, 0.7); player.hitEffectFrames = 5; }
+        }
+    });
+
+    particles.forEach(p => { p.x += p.vx * timeFactor; p.y += p.vy * timeFactor; p.alpha -= 0.04 * timeFactor; });
+    particles = particles.filter(p => p.alpha > 0);
+
+    // Optimized A* Pathfinding with caching
+    const GRID_SIZE = 40;
+    const GRID_WIDTH = Math.ceil(canvas.width / GRID_SIZE);
+    const GRID_HEIGHT = Math.ceil(canvas.height / GRID_SIZE);
+    
+    // Path cache to avoid recalculating paths every frame
+    const pathCache = new Map();
+    let pathCacheKey = '';
+    let cachedGrid = [];
+    
+    function getGridHash() {
+        // Create a hash based on obstacle positions
+        let hash = obstacles.length.toString();
+        for (let obs of obstacles) {
+            hash += `_${Math.floor(obs.x / GRID_SIZE)},${Math.floor(obs.y / GRID_SIZE)}`;
+        }
+        return hash;
+    }
+    
+    function buildWalkableGrid() {
+        const gridHash = getGridHash();
+        if (gridHash === pathCacheKey && cachedGrid.length > 0) {
+            return cachedGrid;
+        }
+        
+        pathCacheKey = gridHash;
+        cachedGrid = [];
+        
+        for (let gy = 0; gy < GRID_HEIGHT; gy++) {
+            cachedGrid[gy] = [];
+            for (let gx = 0; gx < GRID_WIDTH; gx++) {
+                let cx = gx * GRID_SIZE + GRID_SIZE / 2;
+                let cy = gy * GRID_SIZE + GRID_SIZE / 2;
+                let walkable = true;
+                
+                for (let obs of obstacles) {
+                    if (cx > obs.x - 5 && cx < obs.x + obs.w + 5 && 
+                        cy > obs.y - 5 && cy < obs.y + obs.h + 5) {
+                        walkable = false;
+                        break;
+                    }
+                }
+                cachedGrid[gy][gx] = walkable ? 1 : 0;
+            }
+        }
+        return cachedGrid;
+    }
+    
+    function isWalkable(gx, gy) {
+        if (gx < 0 || gx >= GRID_WIDTH || gy < 0 || gy >= GRID_HEIGHT) return false;
+        const grid = buildWalkableGrid();
+        return grid[gy][gx] === 1;
+    }
+    
+    function heuristic(a, b) {
+        return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+    }
+    
+    function findPath(startGX, startGY, endGX, endGY) {
+        if (!isWalkable(startGX, startGY) || !isWalkable(endGX, endGY)) {
+            return null;
+        }
+        
+        // Use a more efficient open set with binary heap-like behavior
+        const openSet = [{ x: startGX, y: startGY, g: 0, f: heuristic({ x: startGX, y: startGY }, { x: endGX, y: endGY }), parent: null }];
+        const closedSet = new Set();
+        
+        while (openSet.length > 0) {
+            // Find node with lowest f score
+            let lowestIndex = 0;
+            let lowestF = openSet[0].f;
+            for (let i = 1; i < openSet.length; i++) {
+                if (openSet[i].f < lowestF) {
+                    lowestF = openSet[i].f;
+                    lowestIndex = i;
+                }
+            }
+            
+            const current = openSet[lowestIndex];
+            
+            // Check if we reached the goal
+            if (current.x === endGX && current.y === endGY) {
+                // Reconstruct path
+                const path = [];
+                let node = current;
+                while (node) {
+                    path.unshift({ x: node.x, y: node.y });
+                    node = node.parent;
+                }
+                return path;
+            }
+            
+            // Move current from open to closed
+            openSet.splice(lowestIndex, 1);
+            const closedKey = current.x * GRID_HEIGHT + current.y;
+            closedSet.add(closedKey);
+            
+            // Check neighbors (4-directional)
+            const neighbors = [
+                { x: current.x + 1, y: current.y },
+                { x: current.x - 1, y: current.y },
+                { x: current.x, y: current.y + 1 },
+                { x: current.x, y: current.y - 1 }
+            ];
+            
+            for (const neighbor of neighbors) {
+                const neighborKey = neighbor.x * GRID_HEIGHT + neighbor.y;
+                if (closedSet.has(neighborKey)) continue;
+                if (!isWalkable(neighbor.x, neighbor.y)) continue;
+                
+                const gScore = current.g + 1;
+                let existingNode = null;
+                for (const n of openSet) {
+                    if (n.x === neighbor.x && n.y === neighbor.y) {
+                        existingNode = n;
+                        break;
+                    }
+                }
+                
+                if (!existingNode) {
+                    openSet.push({
+                        x: neighbor.x,
+                        y: neighbor.y,
+                        g: gScore,
+                        f: gScore + heuristic(neighbor, { x: endGX, y: endGY }),
+                        parent: current
+                    });
+                } else if (gScore < existingNode.g) {
+                    existingNode.g = gScore;
+                    existingNode.f = gScore + heuristic(neighbor, { x: endGX, y: endGY });
+                    existingNode.parent = current;
+                }
+            }
+        }
+        
+        return null; // No path found
+    }
+    
+    // Cache pathfinding results per enemy to reduce calculations
+    const enemyPathCache = new Map();
+    const PATH_CACHE_DURATION = 15; // Frames to cache path
+    
+    function getPathfindingDirection(enemy) {
+        const targetX = player.x;
+        const targetY = player.y;
+        
+        // Convert positions to grid coordinates
+        const startGX = Math.floor(enemy.x / GRID_SIZE);
+        const startGY = Math.floor(enemy.y / GRID_SIZE);
+        const endGX = Math.floor(targetX / GRID_SIZE);
+        const endGY = Math.floor(targetY / GRID_SIZE);
+        
+        // Clamp to grid bounds
+        const clampedEndGX = Math.max(0, Math.min(GRID_WIDTH - 1, endGX));
+        const clampedEndGY = Math.max(0, Math.min(GRID_HEIGHT - 1, endGY));
+        
+        // Check cache
+        const cacheKey = `${startGX},${startGY},${clampedEndGX},${clampedEndGY}`;
+        const cached = enemyPathCache.get(cacheKey);
+        if (cached && cached.frames > 0) {
+            cached.frames--;
+            return cached.direction;
+        }
+        
+        // Find path
+        const path = findPath(startGX, startGY, clampedEndGX, clampedEndGY);
+        
+        let direction = { x: 0, y: 0 };
+        if (path && path.length > 1) {
+            // Get the next step in the path
+            const nextStep = path[1];
+            const targetCellX = nextStep.x * GRID_SIZE + GRID_SIZE / 2;
+            const targetCellY = nextStep.y * GRID_SIZE + GRID_SIZE / 2;
+            
+            const dx = targetCellX - enemy.x;
+            const dy = targetCellY - enemy.y;
+            const dist = Math.hypot(dx, dy);
+            
+            if (dist > 0) {
+                direction = { x: dx / dist, y: dy / dist };
+            }
+        } else {
+            // Fallback to direct movement if no path found
+            const dx = targetX - enemy.x;
+            const dy = targetY - enemy.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 0) direction = { x: dx / dist, y: dy / dist };
+        }
+        
+        // Cache the result
+        enemyPathCache.set(cacheKey, { direction, frames: PATH_CACHE_DURATION });
+        
+        // Limit cache size
+        if (enemyPathCache.size > 200) {
+            const keys = Array.from(enemyPathCache.keys());
+            for (let i = 0; i < 50; i++) {
+                enemyPathCache.delete(keys[i]);
+            }
+        }
+        
+        return direction;
+    }
+
+    enemies.forEach(e => {
+        let targetX = player.x, targetY = player.y;
+        if (e.type === "flanker") { 
+            let side = (e.x < player.x) ? -100 : 100; 
+            targetX = player.x + side; 
+        }
+
+        let dx = targetX - e.x, dy = targetY - e.y, dist = Math.hypot(dx, dy);
+
+        if (e.type === "elite") {
+            if (!e.isCharging && Math.random() < 0.01) { 
+                e.isCharging = true; 
+                e.chargeTimer = 60; 
+                e.chargeTargetX = player.x; 
+                e.chargeTargetY = player.y; 
+            }
+            if (e.isCharging) {
+                e.chargeTimer -= timeFactor;
+                if (e.chargeTimer <= 0) {
+                    let dashDx = e.chargeTargetX - e.x, dashDy = e.chargeTargetY - e.y, dashDist = Math.hypot(dashDx, dashDy);
+                    if (dashDist > 0) { 
+                        e.x += (dashDx / dashDist) * e.speed * 5 * timeFactor; 
+                        e.y += (dashDy / dashDist) * e.speed * 5 * timeFactor; 
+                    }
+                    e.isCharging = false;
+                }
+                return;
+            }
+        }
+
+        if (e.type === "ranged") {
+            let moveDir = getPathfindingDirection(e);
+            if (dist > 220) { 
+                e.x += moveDir.x * e.speed * timeFactor; 
+                e.y += moveDir.y * e.speed * timeFactor; 
+            }
+            else if (dist < 180) { 
+                e.x -= (dx / dist) * e.speed * timeFactor; 
+                e.y -= (dy / dist) * e.speed * timeFactor; 
+            }
+            e.shootCooldown -= timeFactor;
+            if (e.shootCooldown <= 0 && dist > 0) {
+                const projSpeed = 4 + round * 0.1;
+                enemyProjectiles.push({ 
+                    x: e.x + e.w / 2 - 6, 
+                    y: e.y + e.h / 2 - 6, 
+                    w: 12, h: 12, 
+                    vx: (dx / dist) * projSpeed, 
+                    vy: (dy / dist) * projSpeed, 
+                    damage: 1 + round * 0.08 
+                });
+                e.shootCooldown = 90;
+            }
+        } else if (e.type === "charger") {
+            if (e.isCharging) {
+                let chargeDx = e.chargeTargetX - e.x, chargeDy = e.chargeTargetY - e.y, chargeDist = Math.hypot(chargeDx, chargeDy);
+                if (chargeDist > 0) { 
+                    e.x += (chargeDx / chargeDist) * e.speed * 3.2 * timeFactor; 
+                    e.y += (chargeDy / chargeDist) * e.speed * 3.2 * timeFactor; 
+                }
+                e.chargeTimer -= timeFactor;
+                if (e.chargeTimer <= 0) { e.isCharging = false; e.chargeTimer = 90; }
+            } else {
+                e.chargeTimer = Math.max(0, e.chargeTimer - timeFactor);
+                if (dist <= 150 && e.chargeTimer === 0) { 
+                    e.isCharging = true; 
+                    e.chargeTimer = 15; 
+                    e.chargeTargetX = player.x; 
+                    e.chargeTargetY = player.y; 
+                } else if (dist > 0) { 
+                    let moveDir = getPathfindingDirection(e);
+                    e.x += moveDir.x * e.speed * 0.5 * timeFactor; 
+                    e.y += moveDir.y * e.speed * 0.5 * timeFactor; 
+                }
+            }
+        } else {
+            if (dist > 0) { 
+                let moveDir = getPathfindingDirection(e);
+                e.x += moveDir.x * e.speed * timeFactor; 
+                e.y += moveDir.y * e.speed * timeFactor; 
+            }
+        }
+
+        let enemySpeed = e.speed;
+        slowZones.forEach(zone => {
+            if (e.x < zone.x + zone.w && e.x + e.w > zone.x && e.y < zone.y + zone.h && e.y + e.h > zone.y) { 
+                enemySpeed *= 0.5; 
+            }
+        });
+        
+        // Apply slow zone effect to current movement
+        if (enemySpeed < e.speed) {
+            // Already applied above
+        }
+
+        // Obstacle collision resolution
+        obstacles.forEach(obs => {
+            if (e.x < obs.x + obs.w && e.x + e.w > obs.x && e.y < obs.y + obs.h && e.y + e.h > obs.y) {
+                let overlapX = Math.min(e.x + e.w - obs.x, obs.x + obs.w - e.x);
+                let overlapY = Math.min(e.y + e.h - obs.y, obs.y + obs.h - e.y);
+                if (overlapX < overlapY) { 
+                    if (e.x < obs.x) e.x -= overlapX; else e.x += overlapX; 
+                } else { 
+                    if (e.y < obs.y) e.y -= overlapY; else e.y += overlapY; 
+                }
+            }
+        });
+
+        if (dist < 40) {
+            let previousHP = player.hp;
+            if (!player.isDashing) { player.hp -= hardcoreMode ? 2 : 0.2; }
+            if (player.hp < previousHP) { 
+                if(playerHurtSound) playSound(playerHurtSound, 0.7); 
+                player.hitEffectFrames = 5; 
+            }
+        }
+    });
+
+    // Optimized collision detection using spatial awareness
+    bullets.forEach(b => {
+        if (b.hitsLeft <= 0) return;
+        for (let e of enemies) {
+            // Quick distance check before detailed collision
+            if (Math.abs(b.x - e.x) > 100 || Math.abs(b.y - e.y) > 100) continue;
+            if (bulletHitsRect(b, e)) {
+                let actualDamage = b.damage;
+                if (b.isCrit) { actualDamage *= playerStats.critMultiplier; }
+                if (e.type === "shielder") { if (b.y < e.y) { continue; } else { actualDamage *= 3; } }
+                let isInstaKill = Math.random() < playerStats.instaKillChance;
+                if (isInstaKill) { actualDamage = e.hp; b.hitsLeft = 0; damageTexts.push({ x: e.x + e.w/2, y: e.y + e.h/2 - 20, text: "VOID KILL", isCrit: true, frames: 60 }); }
+                damageTexts.push({ x: e.x + e.w/2, y: e.y + e.h/2, text: actualDamage.toFixed(0), isCrit: b.isCrit, frames: 30 });
+                e.hp -= actualDamage; totalDamageDealt += actualDamage; e.hitEffectFrames = 5;
+                if (!isInstaKill) { b.hitsLeft--; }
+                const pushPower = 8;
+                let nx = (e.x + e.w/2) - (b.x + b.w/2), ny = (e.y + e.h/2) - (b.y + b.h/2), ndist = Math.max(1, Math.hypot(nx, ny));
+                e.x += (nx / ndist) * pushPower; e.y += (ny / ndist) * pushPower;
+                spawnParticles(e.x + e.w / 2, e.y + e.h / 2, "#ff5555", 5 + Math.floor(Math.random() * 5));
+                triggerShake(4);
+                if(enemyHitSound) playSound(enemyHitSound, 0.5);
+                if (b.isExplosive && !isInstaKill) {
+                    const explosionDamage = actualDamage * 0.5, explosionRadius = 60;
+                    enemies.forEach(otherE => {
+                        if (otherE !== e) {
+                            let dist = Math.hypot((otherE.x + otherE.w/2) - (e.x + e.w/2), (otherE.y + otherE.h/2) - (e.y + e.h/2));
+                            if (dist < explosionRadius) {
+                                otherE.hp -= explosionDamage; otherE.hitEffectFrames = 5;
+                                damageTexts.push({ x: otherE.x + otherE.w/2, y: otherE.y + otherE.h/2 + 10, text: `(${explosionDamage.toFixed(0)})`, isCrit: false, frames: 30 });
+                            }
+                        }
+                    });
+                }
+                const lifestealUpgrade = playerUpgrades.find(u => u.type === "lifesteal");
+                if (lifestealUpgrade) {
+                    const healAmount = Math.min(playerStats.maxHp - player.hp, actualDamage * lifestealUpgrade.value);
+                    if (healAmount > 0) {
+                        player.hp += healAmount;
+                        damageTexts.push({ x: player.x + player.w / 2, y: player.y - 20, text: "+" + Math.round(healAmount), isCrit: false, frames: 30 });
+                    }
+                }
+            }
+        }
+        barrels.forEach(barrel => {
+            if (!barrel.alive) return;
+            if (b.x < barrel.x + barrel.w && b.x + b.w > barrel.x && b.y < barrel.y + barrel.h && b.y + b.h > barrel.y) {
+                barrel.alive = false;
+                const explosionDamage = 50, explosionRadius = 80;
+                enemies.forEach(e => {
+                    let dx = e.x + e.w/2 - (barrel.x + barrel.w/2), dy = e.y + e.h/2 - (barrel.y + barrel.h/2), dist = Math.hypot(dx, dy);
+                    if (dist < explosionRadius) { e.hp -= explosionDamage; e.hitEffectFrames = 5; damageTexts.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, text: explosionDamage.toFixed(0), isCrit: false, frames: 25 }); }
+                });
+                bosses.forEach(boss => {
+                    let dx = boss.x + boss.w/2 - (barrel.x + barrel.w/2), dy = boss.y + boss.h/2 - (barrel.y + barrel.h/2), dist = Math.hypot(dx, dy);
+                    if (dist < explosionRadius) { boss.hp -= explosionDamage; boss.hitEffectFrames = 5; damageTexts.push({ x: boss.x + boss.w / 2, y: boss.y + boss.h / 2, text: explosionDamage.toFixed(0), isCrit: false, frames: 25 }); }
+                });
+                spawnParticles(barrel.x + barrel.w/2, barrel.y + barrel.h/2, "#ff0000", 15);
+                triggerShake(10);
+                b.hitsLeft = 0;
+            }
+        });
+    });
+
+    let defeatedEnemies = enemies.filter(e => e.hp <= EPSILON);
+    defeatedEnemies.forEach(e => {
+        gainXP(1, e.x, e.y);
+        spawnParticles(e.x + e.w / 2, e.y + e.h / 2, "#ff5555", 7 + Math.floor(Math.random() * 4));
+        triggerShake(5);
+        if (Math.random() < 0.2) { souls.push({x: e.x + e.w / 2 - 5, y: e.y + e.h / 2 - 5, w: 10, h: 10}); }
+    });
+    enemies = enemies.filter(e => e.hp > EPSILON);
+
+    // FIXED: Better sentinel AI - now targets both enemies AND bosses
+    sentinels.forEach(s => {
+        s.lifetime -= timeFactor;
+        
+        // Combine enemies and bosses as targets
+        let allTargets = [...enemies, ...bosses.filter(b => b.alive)];
+        
+        switch(s.type) {
+            case "zombie":
+                let nearest = null, minDist = Infinity;
+                allTargets.forEach(e => { let dist = Math.sqrt((e.x - s.x)**2 + (e.y - s.y)**2); if (dist < minDist) { minDist = dist; nearest = e; } });
+                if (nearest) {
+                    let dx = nearest.x - s.x, dy = nearest.y - s.y, dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist > 0) { s.x += (dx / dist) * s.speed * timeFactor; s.y += (dy / dist) * s.speed * timeFactor; }
+                    if (dist < 35) {
+                        nearest.hp -= s.damage; nearest.hitEffectFrames = 10;
+                        spawnParticles(nearest.x + nearest.w/2, nearest.y + nearest.h/2, "#ff0000", 5);
+                        totalDamageDealt += s.damage;
+                    }
+                }
+                break;
+            case "skeleton":
+                let nearest2 = null, minDist2 = Infinity;
+                allTargets.forEach(e => { let dist = Math.sqrt((e.x - s.x)**2 + (e.y - s.y)**2); if (dist < minDist2) { minDist2 = dist; nearest2 = e; } });
+                if (nearest2 && s.cooldown <= 0) {
+                    bullets.push({ x: s.x + s.w/2 - 2, y: s.y, w: 4, h: 10, vx: 0, vy: -100, damage: s.damage, hitsLeft: 1, type: "sentinel", prevY: s.y });
+                    s.cooldown = 30;
+                    if(shootSound) playSound(shootSound, 0.3);
+                }
+                s.cooldown -= timeFactor;
+                break;
+            case "poison":
+                let nearest3 = null, minDist3 = Infinity;
+                allTargets.forEach(e => { let dist = Math.sqrt((e.x - s.x)**2 + (e.y - s.y)**2); if (dist < minDist3) { minDist3 = dist; nearest3 = e; } });
+                if (nearest3) {
+                    let dx = nearest3.x - s.x, dy = nearest3.y - s.y, dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist > 0) { s.x += (dx / dist) * s.speed * timeFactor; s.y += (dy / dist) * s.speed * timeFactor; }
+                    if (dist < 35) {
+                        nearest3.hp -= s.damage; nearest3.hitEffectFrames = 10;
+                        spawnParticles(nearest3.x + nearest3.w/2, nearest3.y + nearest3.h/2, "#00ff00", 5);
+                        pools.push({ x: s.x, y: s.y, w: 50, h: 50, r: 25, damage: 2, timer: 300, tickTimer: 0, color: "#00ff00" });
+                        s.hp = 0;
+                        totalDamageDealt += s.damage;
+                    }
+                }
+                break;
+            case "swordman":
+                if (!s.direction) { s.direction = 1; s.distanceTravelled = 0; }
+                let moveAmount = s.speed * timeFactor;
+                s.x += moveAmount * s.direction; s.distanceTravelled += moveAmount;
+                let attackX = s.x + s.w, attackY = s.y, attackW = 60, attackH = s.h;
+                allTargets.forEach(e => {
+                    if (e.x < attackX + attackW && e.x + e.w > attackX && e.y < attackY + attackH && e.y + e.h > attackY) {
+                        e.hp -= s.damage; e.hitEffectFrames = 10;
+                        spawnParticles(e.x + e.w/2, e.y + e.h/2, "#ff0000", 5);
+                        totalDamageDealt += s.damage;
+                    }
+                });
+                if (s.distanceTravelled > 400 || s.x > canvas.width || s.x + s.w < 0) { s.hp = 0; }
+                break;
+        }
+        s.x = Math.max(0, Math.min(canvas.width - s.w, s.x));
+        s.y = Math.max(0, Math.min(canvas.height - s.h, s.y));
+    });
+    sentinels = sentinels.filter(s => s.lifetime > 0);
+
+    bosses.forEach(boss => {
+        if (!boss.alive) return;
+        let dx = player.x - boss.x, dy = player.y - boss.y, dist = Math.hypot(dx, dy);
+        if (dist > 0) { boss.x += (dx / dist) * boss.speed * timeFactor; boss.y += (dy / dist) * boss.speed * timeFactor; }
+        if (dist < 60) {
+            let previousHP = player.hp;
+            if (!player.isDashing) { player.hp -= 1; }
+            if (player.hp < previousHP) { if(bossHitSound) playSound(bossHitSound, 0.7); player.hitEffectFrames = 5; }
+        }
+    });
+
+    bullets.forEach(b => {
+        for (let boss of bosses) {
+            if (!boss.alive) continue;
+            if (b.hitsLeft > 0 && bulletHitsRect(b, boss)) {
+                let actualDamage = b.isCrit ? b.damage * playerStats.critMultiplier : b.damage;
+                damageTexts.push({ x: boss.x + boss.w / 2, y: boss.y + boss.h / 2, text: actualDamage.toFixed(0), isCrit: b.isCrit, frames: 30 });
+                boss.hp -= actualDamage; totalDamageDealt += actualDamage; boss.hitEffectFrames = 5; b.hitsLeft--;
+                if(enemyHitSound) playSound(enemyHitSound, 0.5);
+                const lifestealUpgrade = playerUpgrades.find(u => u.type === "lifesteal");
+                if (lifestealUpgrade) {
+                    const healAmount = Math.min(playerStats.maxHp - player.hp, actualDamage * lifestealUpgrade.value);
+                    if (healAmount > 0) {
+                        player.hp += healAmount;
+                        damageTexts.push({ x: player.x + player.w / 2, y: player.y - 20, text: "+" + Math.round(healAmount), isCrit: false, frames: 30 });
+                    }
+                }
+                break;
+            }
+        }
+    });
+
+    bosses.forEach(boss => {
+        if (boss.hp <= EPSILON && boss.alive) {
+            boss.alive = false; gainXP(boss.xp);
+            if(bossDeathSound) playSound(bossDeathSound);
+            spawnParticles(boss.x + boss.w / 2, boss.y + boss.h / 2, "#ff00ff", 12 + Math.floor(Math.random() * 8));
+            triggerShake(18); applyBossEffect(boss);
+            for (let i = 0; i < 3; i++) { souls.push({x: boss.x + boss.w / 2 - 5 + Math.random() * 10, y: boss.y + boss.h / 2 - 5 + Math.random() * 10, w: 10, h: 10}); }
+        }
+    });
+    bosses = bosses.filter(b => b.alive && b.hp > EPSILON);
+
+    if (roundTransitionTimer > 0) {
+        roundTransitionTimer--;
+        if (roundTransitionTimer === 0) { round++; startRound(); roundAnnouncementText = "Round " + round + "!"; roundAnnouncementFrames = 120; }
+    } else if (enemies.length === 0 && bosses.length === 0 && !gameOver) {
+        roundTransitionTimer = 120; // 2 seconds auto-start
+        round++;
+        startRound();
+        roundAnnouncementText = "Round " + round + "!";
+        roundAnnouncementFrames = 120;
+    }
+
+    player.hp = Math.max(0, Math.min(playerStats.maxHp, player.hp));
+    if (player.hp === 0) {
+        gameOver = true;
+        if(backgroundMusic) backgroundMusic.pause();
+        bestRound = Math.max(bestRound, round);
+        totalXpEarned += sessionXpEarned;
+        soulCurrency += Math.max(1, Math.floor(sessionXpEarned / 10));
+        savePersistentProgress();
+        document.getElementById("finalRound").innerText = round;
+        document.getElementById("totalDamage").innerText = totalDamageDealt;
+        document.getElementById("soulsEarned").innerText = Math.max(1, Math.floor(sessionXpEarned / 10));
+        document.getElementById("gameOverScreen").style.display = 'block';
+    }
+}
+
+function draw(){
+    ctx.save();
+    if (shakeFrames > 0) { ctx.translate(Math.random() * 5 - 2.5, Math.random() * 5 - 2.5); shakeFrames--; }
+
+    let hintText = "Press Space to shoot | Press P to Pause";
+    if (playerClass === "Berserker") {
+        hintText = "Press Space to Slash | Press P to Pause";
+    } else if (playerClass === "Summoner") { 
+        hintText = "SUMMONER\nSpace: Shoot Orb\n1: Zombie (15 Mana)\n2: Skeleton (20 Mana)\n3: Poison (25 Mana)\n4: Swordman (30 Mana)\n5: ULTIMATE (100 Mana)\nP: Pause"; 
+    } else if (playerClass === "Warlock") {
+        hintText = "WARLOCK\nPress Space to shoot | Q: Kill All Enemies (80 Mana)\nP: Pause";
+    }
+    document.getElementById("hint").innerText = hintText;
+
+    // FIXED: Update mana bar for Summoner and Warlock
+    if (playerClass === "Summoner" || playerClass === "Warlock") {
+        const manaPercent = (playerMana / playerMaxMana) * 100;
+        document.getElementById("manaFill").style.width = manaPercent + "%";
+        document.getElementById("manaFill").style.background = "#0066ff";
+        document.getElementById("manaBar").style.display = "block";
+    } else {
+        document.getElementById("manaBar").style.display = "none";
+    }
+
+    if (roundAnnouncementFrames > 0) {
+        ctx.fillStyle = "#fff"; ctx.font = "60px monospace"; ctx.textAlign = "center";
+        ctx.fillText(roundAnnouncementText, canvas.width / 2, canvas.height / 2);
+        roundAnnouncementFrames--;
+    }
+
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.lineWidth = 1;
+    for (let x = -100 + (bgOffsetX % 100); x < canvas.width + 100; x += 100) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke(); }
+    for (let y = -100 + (bgOffsetY % 100); y < canvas.height + 100; y += 100) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke(); }
+
+    ctx.fillStyle = "rgba(255,255,255,0.15)";
+    stars.forEach(star => {
+        const starX = (star.x + bgOffsetX * 0.25 + canvas.width) % canvas.width;
+        const starY = (star.y + bgOffsetY * 0.25 + canvas.height) % canvas.height;
+        ctx.globalAlpha = star.brightness; ctx.fillRect(starX, starY, star.size, star.size);
+    });
+    ctx.globalAlpha = 1.0;
+
+    slowZones.forEach(zone => { ctx.fillStyle = "rgba(0, 255, 0, 0.2)"; ctx.fillRect(zone.x, zone.y, zone.w, zone.h); ctx.strokeStyle = "#00ff00"; ctx.lineWidth = 2; ctx.strokeRect(zone.x, zone.y, zone.w, zone.h); });
+    obstacles.forEach(obs => { ctx.fillStyle = "#666"; ctx.fillRect(obs.x, obs.y, obs.w, obs.h); ctx.strokeStyle = "#999"; ctx.lineWidth = 2; ctx.strokeRect(obs.x, obs.y, obs.w, obs.h); });
+    barrels.forEach(barrel => { if (barrel.alive) { ctx.fillStyle = "#ff0000"; ctx.fillRect(barrel.x, barrel.y, barrel.w, barrel.h); ctx.strokeStyle = "#000"; ctx.lineWidth = 2; ctx.strokeRect(barrel.x, barrel.y, barrel.w, barrel.h); } });
+
+    pools.forEach(p => {
+        ctx.globalAlpha = Math.max(0.2, 0.35 * (p.timer / 300));
+        ctx.fillStyle = "#82ff8f"; ctx.beginPath(); ctx.arc(p.x + (p.r||25), p.y + (p.r||25), p.r||25, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1.0; ctx.strokeStyle = "rgba(92, 255, 143, 0.75)"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(p.x + (p.r||25), p.y + (p.r||25), p.r||25, 0, Math.PI * 2); ctx.stroke();
+    });
+
+    if (bosses.length > 0) {
+        const boss = bosses[0];
+        ctx.fillStyle = "rgba(0,0,0,0.75)"; ctx.fillRect(60, 18, canvas.width - 120, 30);
+        ctx.fillStyle = "#D90EFF"; ctx.fillRect(62, 20, Math.max(0, (canvas.width - 124) * displayBossHpRatio), 26);
+        ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(60, 18, canvas.width - 120, 30);
+        ctx.fillStyle = "#fff"; ctx.font = "16px monospace"; ctx.textAlign = "center";
+        ctx.fillText(`BOSS: ${boss.name}`, canvas.width / 2, 38);
+    }
+
+    // FIXED: Draw sentinels with lifetime indicator
+    if (playerClass === "Summoner") {
+        sentinels.forEach(s => {
+            let color = "#8888ff", symbol = "S";
+            switch(s.type) { case "zombie": color = "#00ff00"; symbol = "Z"; break; case "skeleton": color = "#ffffff"; symbol = "K"; break; case "poison": color = "#00aa00"; symbol = "P"; break; case "swordman": color = "#ff0000"; symbol = "W"; break; }
+            ctx.fillStyle = color; ctx.fillRect(s.x, s.y, s.w, s.h);
+            
+            // Lifetime bar
+            ctx.fillStyle = "#333"; ctx.fillRect(s.x, s.y - 5, s.w, 4);
+            ctx.fillStyle = s.lifetime > 300 ? "#00ff00" : (s.lifetime > 150 ? "#ffff00" : "#ff0000");
+            ctx.fillRect(s.x, s.y - 5, s.w * (s.lifetime / 900), 4);
+            
+            ctx.fillStyle = "#000"; ctx.font = "18px monospace"; ctx.textAlign = "center"; ctx.fillText(symbol, s.x + s.w / 2, s.y + s.h * 0.7);
+            if (s.type === "swordman") { ctx.fillStyle = "rgba(255,0,0,0.3)"; ctx.fillRect(s.x + s.w, s.y, 60, s.h); ctx.strokeStyle = "#ff0000"; ctx.lineWidth = 2; ctx.strokeRect(s.x + s.w, s.y, 60, s.h); }
+        });
+    }
+
+    let playerImage = null;
+    if (playerClass === "Berserker" && assets.images.berserker) { playerImage = assets.images.berserker; }
+    
+    if (playerImage && playerImage.complete) {
+        if (player.hitEffectFrames > 0) { ctx.fillStyle = "#ff0000"; ctx.fillRect(player.x,player.y,player.w,player.h); player.hitEffectFrames--; }
+        else { ctx.drawImage(playerImage, player.x, player.y, player.w, player.h); }
+    } else {
+        if (player.hitEffectFrames > 0) { ctx.fillStyle = "#ff0000"; player.hitEffectFrames--; }
+        else { ctx.fillStyle = playerStats.color; }
+        ctx.fillRect(player.x,player.y,player.w,player.h);
+    }
+    
+    if (playerClass !== "Berserker") {
+        const gunX = player.x + player.w - 12, gunY = player.y - 10, gunW = 10, gunH = 25;
+        ctx.fillStyle="#333"; ctx.fillRect(gunX, gunY, gunW, gunH);
+        ctx.strokeStyle="#ff0000"; ctx.lineWidth=2; ctx.strokeRect(gunX, gunY, gunW, gunH);
+        ctx.fillStyle="#000"; ctx.fillRect(gunX + gunW/2 - 2, gunY + gunH - 8, 4, 8);
+
+        if(playerStats.shootCooldown > 1){
+            const cooldownRatio = player.shootCooldown / playerStats.shootCooldown;
+            const indicatorHeight = gunH * cooldownRatio;
+            ctx.fillStyle = "rgba(255, 0, 0, 0.7)";
+            ctx.fillRect(gunX, gunY + gunH - indicatorHeight, gunW, indicatorHeight);
+        }
+    } else {
+        if(playerStats.shootCooldown > 1){
+            const cooldownRatio = player.shootCooldown / playerStats.shootCooldown;
+            const indicatorWidth = player.w * cooldownRatio;
+            ctx.fillStyle = "rgba(255, 0, 0, 0.7)";
+            ctx.fillRect(player.x, player.y - 12, indicatorWidth, 6);
+        }
+    }
+
+    ctx.fillStyle="#000"; ctx.beginPath();
+    ctx.arc(player.x+12,player.y+18,4,0,Math.PI*2);
+    ctx.arc(player.x+36,player.y+18,4,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(player.x+24,player.y+30,10,0,Math.PI);
+    ctx.strokeStyle="#000"; ctx.lineWidth=3; ctx.stroke();
+
+    if(birthdayMode){
+        ctx.fillStyle="#ff0"; ctx.beginPath();
+        ctx.moveTo(player.x+player.w/2,player.y-20);
+        ctx.lineTo(player.x+player.w/2-10,player.y);
+        ctx.lineTo(player.x+player.w/2+10,player.y); ctx.closePath();
+        ctx.fill(); ctx.strokeStyle="#000"; ctx.stroke();
+    }
+
+    ctx.fillStyle="#555"; ctx.fillRect(player.x,player.y-10,player.w,6);
+    ctx.fillStyle="#0f0"; ctx.fillRect(player.x,player.y-10,displayHpRatio * player.w,6);
+    ctx.strokeStyle="#000"; ctx.lineWidth=2; ctx.strokeRect(player.x,player.y-10,player.w,6);
+
+    bullets.forEach(b=>{ 
+        let baseColor = "yellow";
+        if (playerStats.piercingHits > 1) baseColor = "#00ffff";
+        if (b.isCrit) baseColor = "#ff8800";
+        if (b.type === "orb") { ctx.fillStyle = b.isCrit ? "#ff00ff" : "#8a2be2"; ctx.beginPath(); ctx.arc(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, 0, Math.PI * 2); ctx.fill(); }
+        else if (b.type === "berserkerSlash") { ctx.fillStyle = b.isCrit ? "rgba(255, 100, 0, 0.95)" : "rgba(255, 180, 0, 0.85)"; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = "rgba(255, 255, 255, 0.45)"; ctx.lineWidth = 2; ctx.strokeRect(b.x, b.y, b.w, b.h); }
+        else if (b.type === "slash") { ctx.fillStyle = b.isCrit ? "rgba(255, 0, 0, 0.9)" : "rgba(255, 255, 0, 0.7)"; ctx.fillRect(b.x, b.y, b.w, b.h); }
+        else if (b.type === "sentinel") { ctx.fillStyle = "#00ffff"; ctx.fillRect(b.x, b.y, b.w, b.h); }
+        else { ctx.fillStyle = baseColor; ctx.fillRect(b.x,b.y,b.w,b.h); }
+    });
+
+    enemyProjectiles.forEach(p => { ctx.fillStyle = "#ffb84d"; ctx.fillRect(p.x, p.y, p.w, p.h); });
+    souls.forEach(s => { ctx.fillStyle = "#00ffff"; ctx.fillRect(s.x, s.y, s.w, s.h); });
+
+    enemies.forEach(e=>{
+        let enemyImage = assets.images.ghost;
+        if (enemyImage && enemyImage.complete) {
+            if (e.hitEffectFrames > 0) { ctx.fillStyle = "#fff"; ctx.fillRect(e.x,e.y,e.w,e.h); e.hitEffectFrames--; }
+            else {
+                ctx.drawImage(enemyImage, e.x, e.y, e.w, e.h);
+                ctx.globalCompositeOperation = 'source-atop';
+                if (e.type === "elite") { ctx.fillStyle = "rgba(255,0,0,0.5)"; }
+                else if (e.type === "ranged") { ctx.fillStyle = "rgba(0,0,255,0.5)"; }
+                else { ctx.fillStyle = "rgba(255,59,59,0.5)"; }
+                ctx.fillRect(e.x, e.y, e.w, e.h);
+                ctx.globalCompositeOperation = 'source-over';
+            }
+        } else {
+            if (e.hitEffectFrames > 0) { ctx.fillStyle = "#fff"; e.hitEffectFrames--; }
+            else if (e.type === "elite" && e.isCharging) { ctx.fillStyle = "#ff0000"; }
+            else {
+                if (e.type === "elite") ctx.fillStyle = "#ff0000";
+                else if (e.type === "ranged") ctx.fillStyle = "#0000ff";
+                else ctx.fillStyle="#ff3b3b"; 
+            }
+            ctx.fillRect(e.x,e.y,e.w,e.h);
+        }
+        
+        ctx.fillStyle="#000"; ctx.beginPath();
+        ctx.moveTo(e.x+12,e.y+16); ctx.lineTo(e.x+20,e.y+20); ctx.lineTo(e.x+12,e.y+24); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(e.x+36,e.y+16); ctx.lineTo(e.x+28,e.y+20); ctx.lineTo(e.x+36,e.y+24); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(e.x+15,e.y+36); ctx.lineTo(e.x+33,e.y+28);
+        ctx.strokeStyle="#000"; ctx.lineWidth=3; ctx.stroke();
+        
+        ctx.fillStyle="#555"; ctx.fillRect(e.x,e.y-6,e.w,4);
+        ctx.fillStyle="#f00"; ctx.fillRect(e.x,e.y-6,(e.hp/e.maxHp)*e.w,4);
+        ctx.strokeStyle="#000"; ctx.lineWidth=1; ctx.strokeRect(e.x,e.y-6,e.w,4);
+
+        if(birthdayMode){
+            ctx.fillStyle="#ff0"; ctx.beginPath();
+            ctx.moveTo(e.x+e.w/2,e.y-20);
+            ctx.lineTo(e.x+e.w/2-10,e.y);
+            ctx.lineTo(e.x+e.w/2+10,e.y); ctx.closePath();
+            ctx.fill(); ctx.strokeStyle="#000"; ctx.stroke();
+        }
+    });
+
+    bosses.forEach(boss=>{
+        if (boss.hitEffectFrames > 0) { ctx.fillStyle = "#ffff00"; boss.hitEffectFrames--; }
+        else { ctx.fillStyle="#ff00ff"; }
+        ctx.fillRect(boss.x,boss.y,boss.w,boss.h);
+        ctx.fillStyle="#fff"; ctx.font="20px monospace"; ctx.textAlign="center";
+        ctx.fillText("BOSS", boss.x + boss.w/2, boss.y - 10);
+        ctx.textAlign="left";
+        ctx.fillStyle="#555"; ctx.fillRect(boss.x, boss.y-10, boss.w, 8);
+        ctx.fillStyle="#f0f"; ctx.fillRect(boss.x, boss.y-10, (boss.hp/boss.maxHp)*boss.w, 8);
+        ctx.strokeStyle="#000"; ctx.lineWidth=2; ctx.strokeRect(boss.x, boss.y-10, boss.w, 8);
+        ctx.fillStyle="#fff"; ctx.font="14px monospace";
+        ctx.fillText("Ability: " + boss.abilities.join(", "), boss.x, boss.y + boss.h + 15);
+    });
+
+    particles.forEach(p => { ctx.globalAlpha = Math.max(0, p.alpha); ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, p.size, p.size); ctx.globalAlpha = 1.0; });
+    damageTexts.forEach(t => { ctx.fillStyle = t.isCrit ? "#ff8800" : "#fff"; ctx.font = t.isCrit ? "bold 16px monospace" : "14px monospace"; ctx.globalAlpha = t.frames / 30; ctx.textAlign = "center"; ctx.fillText("-" + t.text, t.x, t.y); ctx.globalAlpha = 1.0; });
+
+    let currentHpRatio = player.hp / playerStats.maxHp;
+    let hpElement = document.getElementById("hp");
+    let hpColor = "#fff";
+    if (currentHpRatio < 0.25) { hpColor = "#ff0000"; }
+    else if (currentHpRatio < 0.5) { hpColor = "#ffff00"; }
+    hpElement.style.color = hpColor;
+    
+    document.getElementById("hp").innerText=`${Math.floor(player.hp)} / ${playerStats.maxHp}`;
+    document.getElementById("round").innerText=round;
+    let xpNeeded = getXPNeeded(playerLevel);
+    document.getElementById("xp").innerText=`${playerXP} / ${xpNeeded}`;
+    document.getElementById("level").innerText=playerLevel;
+    document.getElementById("class").innerText=playerClass;
+    document.getElementById("soul").innerText=Math.floor(soulCurrency);
+    
+    if (flashFrames > 0) {
+        ctx.globalAlpha = flashFrames / 60;
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        flashFrames--;
+        ctx.globalAlpha = 1;
+    }
+    
+    ctx.restore();
+}
+
+function continueGame() {
+    level20Choice = false;
+    document.getElementById("level20Choice").style.display = 'none';
+    startRound();
+}
+
+function leaveGame() {
+    let currentSouls = parseInt(localStorage.getItem('souls') || '0');
+    localStorage.setItem('souls', Math.max(0, currentSouls - Math.floor(currentSouls * 0.5)));
+    flashFrames = 60;
+    if(level20ExitSound) playSound(level20ExitSound);
+    setTimeout(() => { window.location.href = 'home.html'; }, 1000);
+}
+
+// Sleep/Skip rounds feature
+function openSleepMenu() {
+    paused = true;
+    if(backgroundMusic) backgroundMusic.pause();
+    document.getElementById("sleepMenu").style.display = 'block';
+}
+
+function closeSleepMenu() {
+    document.getElementById("sleepMenu").style.display = 'none';
+    paused = false;
+    if (audioStarted && backgroundMusic) backgroundMusic.play().catch(e => {});
+    requestAnimationFrame(loop);
+}
+
+function skipRounds(count) {
+    document.getElementById("sleepMenu").style.display = 'none';
+    
+    // Heal 50% HP
+    const healAmount = Math.round(playerStats.maxHp * 0.5);
+    player.hp = Math.min(playerStats.maxHp, player.hp + healAmount);
+    
+    // Show healing effect
+    spawnParticles(player.x + player.w/2, player.y + player.h/2, "#00ff00", 20);
+    damageTexts.push({ x: player.x + player.w/2, y: player.y - 30, text: "+" + healAmount + " HP", isCrit: false, frames: 60 });
+    
+    // Skip rounds
+    round += count;
+    roundAnnouncementText = "Slept through " + count + " rounds!";
+    roundAnnouncementFrames = 120;
+    
+    // Start next round
+    startRound();
+    
+    paused = false;
+    if (audioStarted && backgroundMusic) backgroundMusic.play().catch(e => {});
+    requestAnimationFrame(loop);
+}
+
+// Add key binding for sleep menu (S key when no enemies)
+document.addEventListener("keydown", e => {
+    if (e.key.toLowerCase() === 's' && !gameOver && enemies.length === 0 && bosses.length === 0 && 
+        document.getElementById("levelUpPopup").style.display !== 'block' && 
+        !paused && round > 1) {
+        openSleepMenu();
+    }
+});
+
+// Optimized game loop with delta time tracking
+let lastTime = 0;
+let uiUpdateCounter = 0;
+const UI_UPDATE_INTERVAL = 6; // Update UI every 6 frames instead of every frame
+
+function loop(timestamp) {
+    if (paused) return;
+    
+    const deltaTime = timestamp ? timestamp - lastTime : 16.67;
+    lastTime = timestamp;
+    
+    // Clamp delta time to prevent spiral of death
+    const clampedDelta = Math.min(deltaTime, 50);
+    
+    update(clampedDelta);
+    draw();
+    
+    // Batch UI updates - only update DOM every N frames
+    uiUpdateCounter++;
+    if (uiUpdateCounter >= UI_UPDATE_INTERVAL) {
+        uiUpdateCounter = 0;
+        updateUI();
+    }
+    
+    requestAnimationFrame(loop);
+}
+
+// Separate UI update function to batch DOM operations
+function updateUI() {
+    const hpEl = document.getElementById("hp");
+    const currentHpRatio = player.hp / playerStats.maxHp;
+    let hpColor = "#fff";
+    if (currentHpRatio < 0.25) hpColor = "#ff0000";
+    else if (currentHpRatio < 0.5) hpColor = "#ffff00";
+    hpEl.style.color = hpColor;
+    hpEl.innerText = `${Math.floor(player.hp)} / ${playerStats.maxHp}`;
+    document.getElementById("round").innerText = round;
+    const xpNeeded = getXPNeeded(playerLevel);
+    document.getElementById("xp").innerText = `${playerXP} / ${xpNeeded}`;
+    document.getElementById("level").innerText = playerLevel;
+    document.getElementById("class").innerText = playerClass;
+    document.getElementById("soul").innerText = Math.floor(soulCurrency);
+}
+
+preloadAssets(() => {
+    initializeSoundAssets();
+    startRound();
+    requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>a
