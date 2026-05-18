@@ -19,6 +19,11 @@ const AUDIO_FILES = {
     enemyHitSound: 'hitnoise.mp3',
     level20ExitSound: 'vine-boom-bass-boost-sound-effect.mp3',
     nutSound: 'nut_ZKo5FA9.mp3',
+    greyWolfSound: 'dark-souls-grey-wolf.mp3',
+    killSound: 'dark-souls-kill.mp3',
+    youDiedSound: 'dark-souls-you-died-sound-effect_hm5sYFG.mp3',
+    peaceTheme: 'a-moments-peace-dark-souls.mp3',
+    sirGideonSound: 'sir-gideon-ofnir-the-all-knowing.mp3',
 };
 
 // MAPPED TO YOUR UPLOADED IMAGES

@@ -49,7 +49,7 @@
 </style>
 </head>
 <body>
-<div id="ui">HP: <span id="hp"></span> | Round: <span id="round"></span> | XP: <span id="xp"></span> | Level: <span id="level"></span> | Class: <span id="class"></span> | Soul: <span id="soul"></span></div>
+<div id="ui">HP: <span id="hp"></span> | Round: <span id="round"></span> | XP: <span id="xp"></span> | Level: <span id="level"></span> | Class: <span id="class"></span> | Soul: <span id="soul"></span><span id="journeyTag"></span></div>
 <div id="manaBar"><div id="manaFill"></div></div>
 <div id="hint">Press Space to shoot | Press P to Pause</div>
 <canvas id="gameWindow" width="980" height="600"></canvas>
@@ -171,6 +171,11 @@ let bossHitSound;
 let bossDeathSound;
 let level20ExitSound;
 let nutSound;
+let greyWolfSound;
+let killSound;
+let youDiedSound;
+let peaceTheme;
+let sirGideonSound;
  
 
 function initializeSoundAssets() {
@@ -191,6 +196,11 @@ function initializeSoundAssets() {
     enemyHitSound = assets.audio.enemyHitSound;
     level20ExitSound = assets.audio.level20ExitSound;
     nutSound = assets.audio.nutSound;
+    greyWolfSound = assets.audio.greyWolfSound;
+    killSound = assets.audio.killSound;
+    youDiedSound = assets.audio.youDiedSound;
+    peaceTheme = assets.audio.peaceTheme;
+    sirGideonSound = assets.audio.sirGideonSound;
 }
 
 function playSound(audioElement, volume = 1.0, soundId = null, pitchVariation = false) {
@@ -410,9 +420,14 @@ document.addEventListener('click', handleFirstInteraction);
 
 const urlParams = new URLSearchParams(window.location.search);
 const birthdayMode = urlParams.get("birthday") === "true";
-const difficulty = urlParams.get("difficulty") || "medium";
+let difficulty = urlParams.get("difficulty") || "medium";
+const journeyMode = urlParams.get("journey") === "true";
 const playerName = (urlParams.get("name") || "").toLowerCase();
 const playerClass = urlParams.get("class") || "Ranger"; 
+
+if (journeyMode) {
+    difficulty = "hard";
+}
 
 const hardcoreNames = ["eliad ben ilay", "nehorai"];
 const hardcoreMode = hardcoreNames.includes(playerName) || urlParams.get("hardcore") === "true";
@@ -667,6 +682,94 @@ const BOSS_EFFECTS = {
     "Void Fracture": { desc: "2% Chance for Instant Kill.", effect: () => { playerStats.instaKillChance = (playerStats.instaKillChance || 0) + 0.02; } },
 };
 
+const JOURNEY_BOSSES = [
+    {
+      name: "Emberroot Guardian",
+      title: "The Forest Flame",
+      element: "Fire/Nature",
+      effects: ["Burn", "Root trap", "Flame wave"],
+      phaseCount: 2,
+      environment: { arena: "Ancient burning forest", weather: "Ash rain", hazards: ["Exploding roots", "Fire pools"], musicStyle: "Tribal drums with choir" }
+    },
+    {
+      name: "Cryolisk Queen",
+      title: "Ruler of Frozen Silence",
+      element: "Ice",
+      effects: ["Freeze", "Ice spikes", "Slow"],
+      phaseCount: 3,
+      environment: { arena: "Frozen cave palace", weather: "Heavy snowstorm", hazards: ["Slippery ice", "Falling icicles"], musicStyle: "Cold orchestral ambience" }
+    },
+    {
+      name: "Dreadmaw Titan",
+      title: "The Canyon Crusher",
+      element: "Earth",
+      effects: ["Shockwave", "Armor break", "Stun"],
+      phaseCount: 2,
+      environment: { arena: "Rock canyon battlefield", weather: "Dust storm", hazards: ["Collapsing pillars", "Falling rocks"], musicStyle: "Heavy war drums" }
+    },
+    {
+      name: "Stormveil Seraph",
+      title: "Angel of Thunder",
+      element: "Lightning",
+      effects: ["Chain lightning", "EMP stun", "Electric field"],
+      phaseCount: 3,
+      environment: { arena: "Floating sky ruins", weather: "Thunderstorm", hazards: ["Lightning strikes", "Broken platforms"], musicStyle: "Fast orchestral battle" }
+    },
+    {
+      name: "Rotfang Broodmother",
+      title: "Queen of Decay",
+      element: "Poison",
+      effects: ["Poison", "Corrosion", "Acid pools"],
+      phaseCount: 2,
+      environment: { arena: "Infested swamp nest", weather: "Toxic fog", hazards: ["Poison lakes", "Exploding eggs"], musicStyle: "Dark insect ambience" }
+    },
+    {
+      name: "Lunaris Shade",
+      title: "Moonlight Phantom",
+      element: "Darkness",
+      effects: ["Fear", "Teleport", "Shadow clones"],
+      phaseCount: 3,
+      environment: { arena: "Moonlit ruins", weather: "Dark eclipse", hazards: ["Shadow portals", "Fear zones"], musicStyle: "Whispering choir" }
+    },
+    {
+      name: "Abyssal Leviathan",
+      title: "Terror of the Deep",
+      element: "Water",
+      effects: ["Flood", "Whirlpool", "Drowning"],
+      phaseCount: 4,
+      environment: { arena: "Sunken temple", weather: "Massive tidal storm", hazards: ["Rising water", "Whirlpools"], musicStyle: "Deep cinematic ambience" }
+    },
+    {
+      name: "Ironclad Reaper",
+      title: "Machine of Extinction",
+      element: "Metal",
+      effects: ["Magnetic pull", "Laser beam", "Armor shred"],
+      phaseCount: 3,
+      environment: { arena: "Industrial war factory", weather: "Ash smoke", hazards: ["Laser turrets", "Molten steel"], musicStyle: "Industrial metal soundtrack" }
+    },
+    {
+      name: "Celestara",
+      title: "Starborn Empress",
+      element: "Cosmic",
+      effects: ["Gravity pull", "Meteor rain", "Star burn"],
+      phaseCount: 4,
+      environment: { arena: "Cosmic observatory", weather: "Meteor shower", hazards: ["Gravity shifts", "Falling meteors"], musicStyle: "Epic cosmic orchestra" }
+    },
+    {
+      name: "Void King Xeroth",
+      title: "The Final Rift",
+      element: "Void",
+      effects: ["Reality distortion", "Gravity crush", "Void corruption"],
+      phaseCount: 5,
+      environment: { arena: "Broken dimension", weather: "Reality collapse", hazards: ["Teleport zones", "Gravity fractures"], musicStyle: "Cosmic horror soundtrack" }
+    }
+];
+
+function getJourneyBossData(round) {
+    const index = Math.max(0, Math.min(Math.floor(round / 5) - 1, JOURNEY_BOSSES.length - 1));
+    return JOURNEY_BOSSES[index];
+}
+
 function addLifesteal(amount, name) {
     let lifestealUpgrade = playerUpgrades.find(u => u.type === "lifesteal"); 
     if (!lifestealUpgrade) {
@@ -677,7 +780,7 @@ function addLifesteal(amount, name) {
 }
 
 function applyBossEffect(boss) {
-    const abilityName = boss.abilities[0]; 
+    const abilityName = boss.buff || boss.abilities[0];
     const effect = BOSS_EFFECTS[abilityName];
     if (effect) {
         effect.effect();
@@ -880,7 +983,8 @@ function showLevelUpPopup() {
 }
 
 function startRound(){
-    if (round === 20) {
+    if (round === 21) {
+        if (journeyMode) { winJourney(); return; }
         level20Choice = true;
         document.getElementById("level20Choice").style.display = 'block';
         return;
@@ -900,6 +1004,12 @@ function startRound(){
     let roundHpFactor = enemyHpFactor;
     const isEarlyHard = difficulty === "hard" && round <= 3;
     if (isEarlyHard) { roundSpeedFactor = 1.0; roundHpFactor = 0.95; }
+    if (journeyMode) {
+        const perFive = difficulty === "hard" ? 0.10 : difficulty === "medium" ? 0.05 : 0.01;
+        const completedGroups = Math.floor(round / 5);
+        const journeyBonus = completedGroups * perFive * 0.5;
+        roundSpeedFactor += journeyBonus;
+    }
     
     while (budget > 0) {
         let type, cost;
@@ -956,8 +1066,37 @@ function spawnBoss(){
     const BOSS_XP = 50;
     let bossHp = BOSS_HP_MULTIPLIER + round * 250;
     const bossAbility = generateBossAbilities();
-    let boss = { x: canvas.width/2 - 64, y: 50, w: 128, h: 128, hp: bossHp, maxHp: bossHp, speed: BOSS_SPEED, abilities: bossAbility, name: bossAbility[0], xp: BOSS_XP, alive: true, hitEffectFrames: 0 };
+    let bossName = bossAbility[0];
+    let bossTitle = "";
+    let bossDisplayAbilities = bossAbility;
+    let bossPhaseCount = 1;
+    const bossData = journeyMode ? getJourneyBossData(round) : null;
+    if (bossData) {
+        bossName = bossData.name;
+        bossTitle = bossData.title;
+        bossDisplayAbilities = bossData.effects;
+        bossPhaseCount = bossData.phaseCount;
+    }
+    let boss = {
+        x: canvas.width/2 - 64,
+        y: 50,
+        w: 128,
+        h: 128,
+        hp: bossHp,
+        maxHp: bossHp,
+        speed: BOSS_SPEED,
+        abilities: bossDisplayAbilities,
+        name: bossName,
+        title: bossTitle,
+        phaseCount: bossPhaseCount,
+        buff: bossAbility[0],
+        xp: BOSS_XP,
+        alive: true,
+        hitEffectFrames: 0
+    };
     bosses.push(boss);
+    if (round === 20 && sirGideonSound) { playSound(sirGideonSound, 0.8); }
+    else if (greyWolfSound) { playSound(greyWolfSound, 0.65); }
 }
 
 const BOSS_ABILITY_KEYS = Object.keys(BOSS_EFFECTS);
@@ -1641,6 +1780,7 @@ function update(deltaMs){
         gainXP(1, e.x, e.y);
         spawnParticles(e.x + e.w / 2, e.y + e.h / 2, "#ff5555", 7 + Math.floor(Math.random() * 4));
         triggerShake(5);
+        if (killSound && (e.type === 'elite' || e.type === 'charger' || e.type === 'shielder')) { playSound(killSound, 0.55); }
         if (Math.random() < 0.2) { souls.push({x: e.x + e.w / 2 - 5, y: e.y + e.h / 2 - 5, w: 10, h: 10}); }
     });
     enemies = enemies.filter(e => e.hp > EPSILON);
@@ -1769,6 +1909,7 @@ function update(deltaMs){
     if (player.hp === 0) {
         gameOver = true;
         if(backgroundMusic) backgroundMusic.pause();
+        if (youDiedSound) playSound(youDiedSound, 1);
         bestRound = Math.max(bestRound, round);
         totalXpEarned += sessionXpEarned;
         soulCurrency += Math.max(1, Math.floor(sessionXpEarned / 10));
@@ -1840,7 +1981,11 @@ function draw(){
         ctx.fillStyle = "#D90EFF"; ctx.fillRect(62, 20, Math.max(0, (canvas.width - 124) * displayBossHpRatio), 26);
         ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(60, 18, canvas.width - 120, 30);
         ctx.fillStyle = "#fff"; ctx.font = "16px monospace"; ctx.textAlign = "center";
-        ctx.fillText(`BOSS: ${boss.name}`, canvas.width / 2, 38);
+        const bossLabel = boss.title ? `${boss.name} - ${boss.title}` : boss.name;
+        ctx.fillText(`BOSS: ${bossLabel}`, canvas.width / 2, 38);
+        if (boss.phaseCount) {
+            ctx.fillText(`Phases: ${boss.phaseCount}`, canvas.width / 2, 56);
+        }
     }
 
     // FIXED: Draw sentinels with lifetime indicator
@@ -2017,6 +2162,13 @@ function continueGame() {
     startRound();
 }
 
+function winJourney() {
+    const rewardAmount = 300;
+    const storedCash = parseInt(localStorage.getItem('journeyCash') || '0', 10);
+    localStorage.setItem('journeyCash', storedCash + rewardAmount);
+    window.location.href = 'win.html?money=' + rewardAmount;
+}
+
 function leaveGame() {
     let currentSouls = parseInt(localStorage.getItem('souls') || '0');
     localStorage.setItem('souls', Math.max(0, currentSouls - Math.floor(currentSouls * 0.5)));
@@ -2114,6 +2266,7 @@ function updateUI() {
     document.getElementById("level").innerText = playerLevel;
     document.getElementById("class").innerText = playerClass;
     document.getElementById("soul").innerText = Math.floor(soulCurrency);
+    document.getElementById("journeyTag").innerText = journeyMode ? " | Journey Mode" : "";
 }
 
 preloadAssets(() => {

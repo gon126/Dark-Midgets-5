@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Dark Midgets 5 - Journey Mode</title>
+<style>
+    body { margin: 0; background: radial-gradient(circle at top, #0a0a0e, #050508 45%, #000 100%); color: #c5b8a5; font-family: monospace; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; position: relative; }
+    body::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 20% 20%, rgba(255,100,50,0.03), transparent 20%), radial-gradient(circle at 80% 30%, rgba(100,50,255,0.02), transparent 20%), radial-gradient(circle at 50% 80%, rgba(255,50,50,0.02), transparent 25%); pointer-events: none; animation: ambientPulse 8s ease-in-out infinite; }
+    @keyframes ambientPulse { 0%,100%{opacity:0.6;}50%{opacity:1;} }
+    .ember { position: absolute; width: 3px; height: 3px; background: rgba(255,100,30,0.6); border-radius: 50%; pointer-events: none; animation: emberFloat linear infinite; box-shadow: 0 0 6px rgba(255,100,30,0.4); }
+    @keyframes emberFloat { 0%{transform: translateY(100vh) scale(1);opacity:0;}10%{opacity:0.8;}90%{opacity:0.8;}100%{transform: translateY(-20px) scale(0.5);opacity:0;} }
+    .container { position: relative; z-index: 10; background: rgba(10,8,12,0.95); border: 2px solid rgba(180,150,100,0.25); border-radius: 14px; box-shadow: 0 0 60px rgba(0,0,0,0.5); padding: 40px 50px; max-width: 620px; text-align: center; }
+    h1 { margin: 0 0 14px; font-size: 44px; letter-spacing: 2px; color: #d4c5a0; text-transform: uppercase; }
+    p { color: #a89880; line-height: 1.7; margin: 12px 0; }
+    .note { color: #60c080; font-weight: bold; }
+    .decorative-line { width: 60%; height: 1px; background: linear-gradient(90deg, transparent, rgba(180,150,100,0.4), transparent); margin: 18px auto; }
+    .info-box { background: rgba(0,0,0,0.35); border: 1px solid rgba(180,150,100,0.18); border-radius: 10px; padding: 16px; margin: 14px 0; color: #c5b8a5; text-align: left; }
+    button { width: 240px; margin: 10px 0; padding: 14px 20px; border-radius: 8px; border: 2px solid rgba(180,150,100,0.3); background: rgba(120,40,30,0.85); color: #f5e6d0; font-size: 17px; font-family: monospace; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    button:hover { transform: scale(1.03); box-shadow: 0 0 20px rgba(255,90,40,0.3); }
+    .btn-back { background: rgba(30,30,50,0.9); color: #c5b8a5; }
+</style>
+</head>
+<body>
+<div id="embers"></div>
+<div class="container">
+    <h1>Journey Mode</h1>
+    <div class="decorative-line"></div>
+    <p>Welcome to the 20-round hard boss gauntlet. Each fight is tougher, and reward awaits only the relentless.</p>
+    <div class="info-box">
+        <p><strong>Goal:</strong> Survive through 20 rounds of harder enemies and bosses.</p>
+        <p><strong>Reward:</strong> Finish the journey and earn <span class="note">$300</span> for the game shop wallet.</p>
+        <p><strong>Note:</strong> Journey mode always uses hard difficulty and locks in the special run.</p>
+    </div>
+    <div class="info-box">
+        <p><strong>Selected Class:</strong> <span id="selectedClass">Ranger</span></p>
+        <p><strong>Player Name:</strong> <span id="selectedName">Unknown</span></p>
+    </div>
+    <button onclick="beginJourney()">Start the Journey</button>
+    <button class="btn-back" onclick="goHome()">Back to Home</button>
+</div>
+<script>
+function createEmbers() {
+    const container = document.getElementById('embers');
+    for (let i = 0; i < 14; i++) {
+        const ember = document.createElement('div');
+        ember.className = 'ember';
+        ember.style.left = Math.random() * 100 + 'vw';
+        ember.style.animationDuration = (4 + Math.random() * 6) + 's';
+        ember.style.animationDelay = (Math.random() * -8) + 's';
+        ember.style.width = (2 + Math.random() * 3) + 'px';
+        ember.style.height = ember.style.width;
+        container.appendChild(ember);
+    }
+}
+function getQueryParam(name) {
+    return new URLSearchParams(window.location.search).get(name);
+}
+function beginJourney() {
+    const params = new URLSearchParams();
+    params.set('journey', 'true');
+    params.set('difficulty', 'hard');
+    const playerClass = getQueryParam('class') || 'Ranger';
+    const playerName = getQueryParam('name');
+    params.set('class', playerClass);
+    if (playerName) params.set('name', playerName);
+    if (getQueryParam('hardcore') === 'true') params.set('hardcore', 'true');
+    window.location.href = 'game.html?' + params.toString();
+}
+function goHome() {
+    window.location.href = 'home.html';
+}
+document.addEventListener('DOMContentLoaded', () => {
+    createEmbers();
+    document.getElementById('selectedClass').textContent = getQueryParam('class') || 'Ranger';
+    document.getElementById('selectedName').textContent = getQueryParam('name') || 'Unknown';
+});
+</script>
+</body>
+</html>
