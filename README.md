@@ -5,22 +5,10 @@ A thrilling roguelike game where you choose your character class, face waves of 
 ---
 
 ## 🚀 Quick Start - How to Activate
+click the link and try
+(https://gon126.github.io/Dark-Midgets-5/)
+but if you dont want to play online you can download the files no virusue but it might not work
 
-### **EASIEST WAY - Play Online (No Setup Required)**
-
-1. **Open the game**: Visit [Live Game Link] or open `home.html` in your browser
-2. **Enter your name** and select a character class
-3. **Choose difficulty** (Easy, Medium, or Hard)
-4. **Click "Start Game"** and begin playing!
-
-### **Local Installation (Offline Play)**
-
-1. Download this repository
-2. Extract all files to a folder
-3. Open `home.html` in your web browser (any modern browser works)
-4. Play offline - no internet required
-
----
 
 ## 🎮 Game Controls
 
